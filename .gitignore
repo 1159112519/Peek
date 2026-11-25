@@ -1,0 +1,15 @@
+# Generated build and local run artifacts
+node_modules/
+/artifacts/
+/portable.*.payload*
+/desktop/app/*.exe
+/desktop/app/*.exe.config
+/desktop/app/app/
+/desktop/app/README.txt
+/desktop/app/VERSION
+/desktop/app/payload-manifest.json
+/desktop/app/resources/brand-icons/
+/desktop/app/resources/fonts/
+/desktop/app/resources/locales/
+/desktop/app/resources/peek-icons/
+/desktop/app/resources/workbench/
