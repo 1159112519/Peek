@@ -28,6 +28,14 @@
   <a href="docs/screenshots/taskbar-layouts.png"><img src="docs/screenshots/taskbar-layouts.png" width="800" alt="Peek 浅色任务栏小组件：并列对照一列、两列和三列，每列有两行读数"></a>
 </p>
 
+### 空间不足时自动收缩
+
+先缩小列间距，再从右侧逐列退出；空间腾出来后恢复原排列。
+
+<p align="center">
+  <img src="docs/screenshots/taskbar-squeeze.gif" width="800" alt="Peek 任务栏空间变化：三列收紧、减为两列和一列、隐藏，再逐列恢复">
+</p>
+
 ### 多页切换，按用途分组
 
 最多三页。比如第一页看利用率，第二页看网速和磁盘读写，第三页看显卡温度、频率和功耗。把鼠标移到小组件上用滚轮换页，也可以开启定时切页。
@@ -41,8 +49,7 @@
 数字适合看当前值，折线适合看短期变化。部分指标还支持柱状图或环形图；一列或两列时，数字和小图可以放在同一个指标里；名称、读数和图形的颜色可以分别调整。
 
 <p align="center">
-  <a href="docs/screenshots/taskbar-graphs.png"><img src="docs/screenshots/taskbar-graphs.png" width="800" alt="Peek 数字与图形组合：CPU 旁是折线，GPU 和内存旁是环形，SSD 旁是条形刻度"></a><br>
-  <sub>以上画面由 Peek v0.1.0 的原生任务栏渲染器生成，读数为演示数据。</sub>
+  <a href="docs/screenshots/taskbar-graphs.png"><img src="docs/screenshots/taskbar-graphs.png" width="800" alt="Peek 数字与图形组合：CPU 旁是折线，GPU 和内存旁是环形，SSD 旁是条形刻度"></a>
 </p>
 
 还可以设置网速单位、隐藏部分单位或百分号、调整刷新间隔。需要时可开启「点击打开资源详情」。可采集的指标取决于硬件与驱动。
