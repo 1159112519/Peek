@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -43,7 +43,9 @@ internal static class TaskbarData {
    add("gpuFrequency","GPU",gpu==null?null:TaskbarNumber(gpu.Clock)/1000,"GHz",1);
    add("gpuTemperature","GPU",gpu==null?null:TaskbarNumber(gpu.Temp),"°C",0);
    add("gpuPower","功耗",gpu==null?null:TaskbarNumber(gpu.Power),"W",0);
-   add("gpuFan","风扇",gpu==null?null:TaskbarNumber(gpu.Fan),"%",0);
+   var fan=gpu==null?null:TaskbarNumber(gpu.Fan);
+   add("gpuFan","风扇",fan>=0?fan:null,"%",0);
+   if(widget!=null&&!(fan>=0))snap.values["gpuFan"].reason=gpu==null?"没有可用的 GPU 读数":"显卡驱动未提供风扇读数";
    var volume=widget!=null&&widget.volume.Length>0?metrics.Volumes.FirstOrDefault(v=>string.Equals(v.Path,widget.volume,StringComparison.OrdinalIgnoreCase)&&v.TotalBytes>0):metrics.Volumes.FirstOrDefault(v=>v.Path==metrics.PrimaryStoragePath&&v.TotalBytes>0)??metrics.Volumes.FirstOrDefault(v=>v.TotalBytes>0);
    add("storage","存储",volume==null?null:(double?)volume.UsedPercent,"%",0);add("storageFree","可用",volume==null?null:(double?)volume.AvailableBytes/1073741824,"GB",1);
    if(!stale&&volume!=null)snap.detailVolume=volume.Path;

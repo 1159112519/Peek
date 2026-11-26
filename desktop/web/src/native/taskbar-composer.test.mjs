@@ -1,5 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {displayModule,editLayout,migrateLayout} from './taskbar-composer.js';
+import {displayModule,editLayout,migrateLayout,moduleLabel} from './taskbar-composer.js';
+test('built-in English GPU power abbreviation is PWR',()=>assert.equal(moduleLabel({metricId:'gpuPower',name:{variant:'english'}},'功耗'),'PWR'));
 const fixture=()=>migrateLayout({slots:6,page:1,pages:[['cpu',null,'gpu','memory','future','storageWrite'],['cpu','down']]});
 test('legacy six cells preserve all three columns and coordinates',()=>{
  const layout=fixture();assert.equal(layout.pages.length,2);assert.equal(layout.activePageId,layout.pages[1].id);

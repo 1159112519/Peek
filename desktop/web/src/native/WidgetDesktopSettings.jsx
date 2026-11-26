@@ -5,6 +5,7 @@ import {t} from '../i18n/index.js';
 import {ColorPane} from './TaskbarColorPane';
 import {Readout,taskbarPreviewFootprint} from './TaskbarReadout';
 import {taskbarMetrics} from './taskbar-layout';
+import {alignDesktopValues} from './taskbar-display';
 import {displayModule,groups,moduleLabel,nameVariants,partLabels,variantLabel} from './taskbar-composer';
 import {tabs,moveTab,withColor} from './taskbar-colors.mjs';
 import {createTaskbarPreviewFeed} from './taskbar-preview';
@@ -55,10 +56,11 @@ export function WidgetDesktopSettings({draft,saved,change,active}){
  const format={...draft.taskbar,memoryMode:config.memoryMode},visible=indices(cols,rows),slot=visible.includes(selected)?selected:visible[0];
  // Move the assembled taskbar readout as one group. Keep its tracks untouched.
  const bandsFor=rowCount=>Array.from({length:3},(_,col)=>{
-  const occupied=Array.from({length:rowCount},(_,r)=>displayCells[r*3+col]).filter(Boolean);
-  const bounds=occupied.map(id=>taskbarPreviewFootprint(moduleFor(id),null,inkWidth,layout?.typography,format,config.labels?.[id],!config.showUnits));
-  const left=bounds.length?Math.min(...bounds.map(b=>b.left)):0;
-  return {left,span:bounds.length?Math.ceil(Math.max(...bounds.map(b=>b.right))-left):48};
+  const bounds=Array.from({length:rowCount},(_,r)=>{const id=displayCells[r*3+col];return id?taskbarPreviewFootprint(moduleFor(id),null,inkWidth,layout?.typography,format,config.labels?.[id],!config.showUnits,snapshot??{}):null;});
+  const shifts=alignDesktopValues(bounds.map(b=>b?.value)),occupied=bounds.filter(Boolean);
+  const left=occupied.length?Math.min(...occupied.map(b=>b.left)):0;
+  const right=Math.max(...bounds.map((b,r)=>b?b.value?Math.max(b.nameRight,b.value.right+shifts[r]):b.right:0));
+  return {left,span:occupied.length?right-left:48,shifts};
  });
  const measureBands=rowCount=>{const bands=bandsFor(rowCount),edges=[0];for(let i=0;i<3;i++)edges.push(edges[i]+bands[i].span+(i?taskbarGap:0));return {bands,edges};};
  const {bands,edges}=measureBands(rows);
@@ -108,7 +110,7 @@ export function WidgetDesktopSettings({draft,saved,change,active}){
      <div className="peek-desktop-grid" style={{width:Math.max(0,geometry.w-insetX*2),height:Math.max(0,geometry.h-insetY*2)}}>
       {displayCells.map((id,i)=>{const used=indices(guideCols,guideRows).includes(i);return <div key={i} className="peek-desktop-slot" data-guide={used} data-selected={slot===i&&!dragSize} data-drop={dragOver===i} style={{left:Math.max(0,(geometry.w-paint.edges[guideCols]-insetX*2)/2)+paint.edges[i%3]+(i%3?taskbarGap:0),width:paint.bands[i%3].span,top:Math.floor(i/3)*cellHeight}} onDragOver={e=>{if(e.dataTransfer.types.includes(dragType)){e.preventDefault();setDragOver(i);}}} onDragLeave={()=>setDragOver(v=>v===i?null:v)} onDrop={e=>{e.preventDefault();move(i,acceptMetric(e));setDragOver(null);}}>
        <button type="button" aria-label={id?t(details[id]):t('空位置')} tabIndex={used?0:-1} onClick={()=>chooseSlot(i)} draggable={Boolean(id)} onDragStart={e=>startMetric(e,id)} onDragEnd={()=>setDragOver(null)}>
-        {id?<span className="peek-desktop-ink" style={{marginLeft:-paint.bands[i%3].left}}><Readout module={moduleFor(id)} width={inkWidth} snapshot={snapshot} points={series[id]?.points} format={format} colors={previewColors} typography={layout?.typography} literalNames labelOverride={config.labels?.[id]} hideUnit={!config.showUnits}/></span>:<span className="peek-desktop-empty" aria-hidden="true">+</span>}
+        {id?<span className="peek-desktop-ink" style={{marginLeft:-paint.bands[i%3].left}}><Readout desktopReadout module={moduleFor(id)} width={inkWidth} snapshot={snapshot} points={series[id]?.points} format={format} colors={previewColors} typography={layout?.typography} literalNames labelOverride={config.labels?.[id]} hideUnit={!config.showUnits} valueShift={paint.bands[i%3].shifts[Math.floor(i/3)]??0}/></span>:<span className="peek-desktop-empty" aria-hidden="true">+</span>}
        </button>
       </div>;})}
      </div>
@@ -136,7 +138,7 @@ export function WidgetDesktopSettings({draft,saved,change,active}){
          {groups[category][1].map(id=>{const item=moduleFor(id),name=details[id];return <div className="tb42-library-item" key={id} data-metric={id} data-located={selectedId===id} aria-label={t(name)}>
           <div className="tb42-library-names">{nameVariants(id).map(variant=><button type="button" key={variant} data-variant={variant} draggable title={`${t(name)}: ${t(variantLabel[variant])}`} aria-label={`${t(name)} ${t(variantLabel[variant])}`} onDragStart={e=>startMetric(e,id,{variant})} onClick={()=>move(slot,{id,variant})}><Readout format={format} colors={previewColors} module={{...item,name:{variant},parts:[]}} snapshot={snapshot} literalNames catalogueScale={1.08} centerCatalogueName mode="name"/></button>)}</div>
           <span className="tb42-palette-divider" aria-hidden="true"/>
-          <div className="tb42-library-parts">{Object.entries(partLabels).map(([part,label])=><button type="button" key={part} draggable data-library-part={part} title={`${t(name)}: ${t(label)}`} aria-label={`${t(name)} ${t(label)}`} onDragStart={e=>startMetric(e,id,{part})} onClick={()=>move(slot,{id,part})}><Readout format={format} colors={previewColors} module={{...item,parts:[part]}} snapshot={snapshot} points={series[id]?.points} literalNames catalogueScale={1.06} mode="part"/></button>)}</div>
+          <div className="tb42-library-parts">{Object.entries(partLabels).map(([part,label])=><button type="button" key={part} draggable data-library-part={part} title={part==='number'&&snapshot?.values?.[id]?.reason?t(snapshot.values[id].reason):`${t(name)}: ${t(label)}`} aria-label={`${t(name)} ${t(label)}`} onDragStart={e=>startMetric(e,id,{part})} onClick={()=>move(slot,{id,part})}><Readout format={format} colors={previewColors} module={{...item,parts:[part]}} snapshot={snapshot} points={series[id]?.points} literalNames catalogueScale={1.06} mode="part"/></button>)}</div>
          </div>;})}
         </div>
        </div>
@@ -158,7 +160,6 @@ export function WidgetDesktopSettings({draft,saved,change,active}){
   </div>
   <section className="widget-settings-group" aria-labelledby="widget-desktop-behavior-title">
    <h4 id="widget-desktop-behavior-title">{t('桌面窗口')}</h4>
-   {actionRow(['enabled','显示桌面监测'])}
    <div className="widget-check-grid widget-desktop-behavior">{behavior.map(check)}</div>
    <div className="widget-option-list widget-desktop-fields">
     {field('双击动作','doubleClick',[['settings','打开小组件设置'],['taskmanager','打开任务管理器'],['none','不执行操作']].map(([id,label])=><option key={id} value={id}>{t(label)}</option>))}

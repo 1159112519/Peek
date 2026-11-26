@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -40,12 +40,13 @@ internal static class WidgetHost {
   return false;
  }
  [STAThread] public static int Main(string[] args) {
-  bool background=false;
+  bool background=false;string updateTicket=null;
   try {
    WorkbenchHost.DataRoot=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AsterHubWidgets");
    for(int i=0;i<args.Length;i++) switch(args[i]) {
     case "--launcher":LauncherPath=Path.GetFullPath(args[++i]);break;
     case "--background":background=true;break;
+    case "--update-ticket":updateTicket=args[++i];break;
     case "--smoke":WorkbenchHost.DataRoot=WorkbenchHost.SmokeRoot=Path.GetFullPath(args[++i]);break;
     case "--smoke-taskbar":WorkbenchHost.SmokeTaskbar=true;break;
     case "--debug-port":WorkbenchHost.DebugPort=int.Parse(args[++i]);break;
@@ -73,7 +74,13 @@ internal static class WidgetHost {
      using(var runtime=new WidgetRuntime(app)) {
       var wait=ThreadPool.RegisterWaitForSingleObject(restore,delegate{if(!app.Dispatcher.HasShutdownStarted)app.Dispatcher.BeginInvoke(new Action(runtime.ShowSettings));},null,Timeout.Infinite,false);
       app.SessionEnding+=(s,e)=>runtime.Exit();
-      try{if(!background)app.Dispatcher.BeginInvoke(new Action(runtime.ShowSettings));else app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(runtime.PrepareSettings));return app.Run();}finally{wait.Unregister(null);}
+      try{
+       if(!background)app.Dispatcher.BeginInvoke(new Action(runtime.ShowSettings));else app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(runtime.PrepareSettings));
+       if(updateTicket!=null)app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
+        EventWaitHandle signal;if(EventWaitHandle.TryOpenExisting(PeekUpdateProtocol.EventName(updateTicket,"running"),out signal))using(signal)signal.Set();
+       }));
+       return app.Run();
+      }finally{wait.Unregister(null);}
      }
      }
     } finally {mutex.ReleaseMutex();}
@@ -120,8 +127,12 @@ internal sealed class WidgetRuntime:IDisposable {
  readonly DispatcherTimer updateTimer;
  PeekUpdateResult updateState=new PeekUpdateResult("idle");
  Task<PeekUpdateResult> updateCheck;
+ CancellationTokenSource updateTransfer;
+ PeekUpdateJob preparedUpdate;
+ bool updateInstalling;
  string notifiedUpdate;
  readonly LocalLightCapture light;
+ readonly WidgetGatewayProbe gateway=new WidgetGatewayProbe();
  readonly TaskbarController taskbar;
  readonly System.Windows.Forms.NotifyIcon tray;
  System.Drawing.Icon trayIcon;
@@ -138,6 +149,7 @@ internal sealed class WidgetRuntime:IDisposable {
   preferences.widgetDesktop=(preferences.widgetDesktop??new WidgetDesktopOptions()).Normalize();
   preferences.widgetMonitoring=(preferences.widgetMonitoring??new WidgetMonitoring()).Normalize();
   alerts=new WidgetAlerts(WorkbenchHost.DataRoot);
+  ConfigureGateway();
   capture=new DeviceCapture(null,null,s=>Local.Collect(),1);
   capture.Configure(new[]{device},3,preferences.localIntervalMs);
   light=new LocalLightCapture(null,preferences.localIntervalMs);
@@ -152,6 +164,10 @@ internal sealed class WidgetRuntime:IDisposable {
   ConfigureDesktop();
   updateTimer=new DispatcherTimer(DispatcherPriority.Background);
   updateTimer.Tick+=(s,e)=>{updateTimer.Stop();if(!closing&&preferences.widgetAutoCheckUpdates){updateTimer.Interval=TimeSpan.FromHours(24);updateTimer.Start();CheckUpdates(true);}};
+  var failedUpdate=Path.Combine(WorkbenchHost.DataRoot,PeekUpdateProtocol.FailureFile);
+  if(File.Exists(failedUpdate)){
+   try{updateState=new PeekUpdateResult("applyError",detail:File.ReadAllText(failedUpdate));}catch(IOException){}catch(UnauthorizedAccessException){}
+  }
   ScheduleUpdates();
   tray.MouseUp+=(s,e)=>{if(e.Button==System.Windows.Forms.MouseButtons.Left)Dispatch(ShowSettings);else if(e.Button==System.Windows.Forms.MouseButtons.Right)Dispatch(()=>ShowMenu(false));};
   app.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{if(!closing&&menu==null)WarmMenu();}));
@@ -219,7 +235,14 @@ internal sealed class WidgetRuntime:IDisposable {
   try{var next=preferences.Copy();next.taskbar=old.Normalize();if(next.taskbar.SetActive(page)){next.Save();preferences=next;}}catch(Exception ex){DiagnosticsLog.Write("widget-active-page",ex);}
  }
  void ToggleDisplay(){try{var next=preferences.taskbar.Normalize();next.enabled=!next.enabled;SaveTaskbar(next,startup.Enabled,false);}catch(Exception ex){DiagnosticsLog.Write("widget-toggle",ex);tray.ShowBalloonTip(2500,"Peek","无法保存监测设置。",System.Windows.Forms.ToolTipIcon.Warning);}}
- TaskbarSnapshot Snapshot(){var p=preferences;return TaskbarData.Compose(device,capture.Latest(device),capture.IntervalSeconds(device),light.Latest,p.localIntervalMs,p.widgetMonitoring);}
+ void ConfigureGateway(){var options=preferences.widgetMonitoring;gateway.Configure(!WidgetHost.TestMode&&options.probeGateway,options.adapter);}
+ TaskbarSnapshot Snapshot(){
+  var p=preferences;var snapshot=TaskbarData.Compose(device,capture.Latest(device),capture.IntervalSeconds(device),light.Latest,p.localIntervalMs,p.widgetMonitoring);
+  var probe=gateway.Latest;
+  snapshot.values["ping"]=new TaskbarValue{id="ping",label="延迟",value=probe.Ping,unit="ms",timeUtc=probe.TimeUtc,animate=false,reason=probe.PingReason};
+  snapshot.values["loss"]=new TaskbarValue{id="loss",label="丢包",value=probe.Loss,unit="%",timeUtc=probe.TimeUtc,animate=false,reason=probe.LossReason};
+  return snapshot;
+ }
  void ConfigureDesktop(){
   if(!preferences.widgetDesktop.enabled){if(desktopWindow!=null){desktopWindow.Close();desktopWindow=null;}return;}
   if(desktopWindow==null){var created=new WidgetDesktopWindow(WorkbenchHost.DataRoot,ShowSettings,()=>ShowMenu(false,true));desktopWindow=created;created.Closed+=(s,e)=>{if(ReferenceEquals(desktopWindow,created))desktopWindow=null;};}
@@ -243,12 +266,18 @@ internal sealed class WidgetRuntime:IDisposable {
   var sample=light.Latest;return new{fullIntervalMs=capture.IntervalMilliseconds(device),lightIntervalMs=sample==null?0:sample.IntervalMs,desktop=desktopWindow==null?null:desktopWindow.State()};
  }
  void RefreshBackground(){
+  gateway.Tick();
   var p=preferences;var reading=capture.Latest(device);var fresh=alerts.Observe(reading,p.widgetMonitoring.adapter,DateTime.Now);
   bool notifications=!WidgetHost.TestMode&&p.widgetTrayVisible&&(p.widgetMonitoring.trafficMiB>0||p.widgetMonitoring.memoryPercent>0||p.widgetMonitoring.gpuCelsius>0);
   if(desktopWindow!=null||notifications){
    var snapshot=Snapshot();if(desktopWindow!=null)desktopWindow.RenderSnapshot(snapshot);
    if(notifications)alerts.Evaluate(p.widgetMonitoring,snapshot,fresh,(name,body)=>tray.ShowBalloonTip(3500,name,body,System.Windows.Forms.ToolTipIcon.Info));
   }
+ }
+ internal object GatewayStatus(){
+  var probe=gateway.Latest;
+  var smoke=WidgetHost.TestMode&&preferences.widgetMonitoring.probeGateway;
+  return new{ping=probe.Ping,loss=probe.Loss,pingReason=smoke?"测试模式不发送网关请求":probe.PingReason,lossReason=probe.LossReason};
  }
  internal object Sources(){
   var latest=capture.Latest(device);var m=latest==null?null:latest.Metrics;
@@ -280,6 +309,7 @@ internal sealed class WidgetRuntime:IDisposable {
  internal PeekUpdateResult UpdateStatus {get{return updateState;}}
  void PublishUpdate(PeekUpdateResult state){updateState=state;if(window!=null)window.PublishUpdate(state);}
  internal Task<PeekUpdateResult> CheckUpdates(bool automatic=false){
+  if(updateTransfer!=null||updateInstalling||preparedUpdate!=null||(automatic&&updateState.state=="applyError"))return Task.FromResult(UpdateStatus);
   if(updateCheck!=null&&!updateCheck.IsCompleted)return updateCheck;
   PublishUpdate(new PeekUpdateResult("checking"));
   return updateCheck=RunUpdateCheck(automatic);
@@ -301,6 +331,66 @@ internal sealed class WidgetRuntime:IDisposable {
    }
   }
   return result;
+ }
+ internal PeekUpdateResult BeginDownloadUpdate(bool installAfterDownload=false){
+  if(closing||updateTransfer!=null||updateInstalling||preparedUpdate!=null)return UpdateStatus;
+  if((updateState.state!="available"&&updateState.state!="applyError")||string.IsNullOrEmpty(updateState.version))throw new InvalidOperationException("请先检查更新。");
+  var next=PeekUpdateProtocol.ReadVersion(updateState.version);
+  var transfer=new CancellationTokenSource();updateTransfer=transfer;
+  PublishUpdate(new PeekUpdateResult("downloading",next.ToString(3)));
+  DownloadUpdateAsync(next,transfer,installAfterDownload);
+  return UpdateStatus;
+ }
+ internal PeekUpdateResult CancelUpdate(){
+  if(updateTransfer!=null&&updateState.state=="downloading")updateTransfer.Cancel();
+  return UpdateStatus;
+ }
+ async void DownloadUpdateAsync(Version next,CancellationTokenSource transfer,bool installAfterDownload){
+  string version=next.ToString(3);
+  try{
+   var job=await Task.Run(()=>PeekUpdateDownload.Prepare(next,value=>{
+    if(app.Dispatcher.HasShutdownStarted)return;
+    app.Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>{
+     if(!closing&&ReferenceEquals(transfer,updateTransfer)&&updateState.state=="downloading")PublishUpdate(new PeekUpdateResult("downloading",version,value));
+    }));
+   },transfer.Token));
+   if(closing)return;transfer.Token.ThrowIfCancellationRequested();
+   preparedUpdate=job;
+   if(installAfterDownload)BeginApplyUpdate();
+   else PublishUpdate(new PeekUpdateResult("ready",version,100));
+  }catch(OperationCanceledException){if(!closing)PublishUpdate(new PeekUpdateResult("available",version));}
+  catch(Exception ex){DiagnosticsLog.Write("peek-update-download",ex);if(!closing)PublishUpdate(new PeekUpdateResult("applyError",version,detail:ex is InvalidDataException||ex is IOException?ex.Message:null));}
+  finally{updateTransfer=null;transfer.Dispose();}
+ }
+ internal PeekUpdateResult BeginApplyUpdate(){
+  if(closing||updateInstalling)return UpdateStatus;
+  var job=preparedUpdate;
+  if(job==null)throw new InvalidOperationException("请先下载并校验更新包。");
+  updateInstalling=true;
+  PublishUpdate(new PeekUpdateResult("installing",job.Version.ToString(3),100));
+  ApplyUpdateAsync(job);
+  return UpdateStatus;
+ }
+ async void ApplyUpdateAsync(PeekUpdateJob job){
+  string version=job.Version.ToString(3);
+  try{
+   var worker=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"runtime","PeekUpdateWorker.exe");
+   using(var ready=new EventWaitHandle(false,EventResetMode.ManualReset,PeekUpdateProtocol.EventName(job.Id,"ready")))
+   using(var go=new EventWaitHandle(false,EventResetMode.ManualReset,PeekUpdateProtocol.EventName(job.Id,"go")))
+   using(var process=Process.Start(new ProcessStartInfo(worker,PeekUpdateProtocol.Quote(job.JobFile)){
+    UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=job.Directory
+   })){
+    if(process==null)throw new IOException("无法启动更新程序，当前版本仍可使用。");
+    bool prepared=await Task.Run(()=>{
+     for(int i=0;i<80;i++){if(ready.WaitOne(250))return true;if(process.HasExited)return false;}
+     return false;
+    });
+    if(closing)return;
+    if(!prepared){var error=Path.Combine(job.Directory,"error.txt");if(File.Exists(error))DiagnosticsLog.Write("peek-update-preflight",new IOException(File.ReadAllText(error)));throw new IOException("无法准备安装。请检查 Peek 所在目录是否可写，或使用安装包更新。");}
+    go.Set();Exit();
+   }
+  }catch(Exception ex){DiagnosticsLog.Write("peek-update-apply",ex);if(!closing)PublishUpdate(new PeekUpdateResult("applyError",version,detail:ex is InvalidDataException||ex is IOException?ex.Message:null));}
+  finally{updateInstalling=false;preparedUpdate=null;}
  }
  internal void OpenReleasePage(){
   if(WidgetHost.TestMode){File.WriteAllText(Path.Combine(WorkbenchHost.SmokeRoot,"peek-open-releases.test.txt"),PeekUpdates.ReleasesUrl);return;}
@@ -350,6 +440,7 @@ internal sealed class WidgetRuntime:IDisposable {
   try{candidate.Save();}catch{if(start!=wasStartup)startup.Set(wasStartup);throw;}
   alerts.SettingsChanged(preferences.widgetMonitoring,candidate.widgetMonitoring);
   preferences=candidate;
+  ConfigureGateway();
   if(autoChanged)ScheduleUpdates();
   if(intervalChanged){capture.Configure(new[]{device},3,candidate.localIntervalMs);light.SetInterval(candidate.localIntervalMs);light.RequestRefresh();}
   if(iconChanged){
@@ -363,8 +454,8 @@ internal sealed class WidgetRuntime:IDisposable {
   taskbar.Configure(applied);ConfigureDesktop();
   if(window!=null)window.RefreshParkedDraft();
  }
- internal void Exit(){if(closing)return;closing=true;if(window!=null)window.ClosePermanently();if(desktopWindow!=null)desktopWindow.Close();app.Shutdown();}
- public void Dispose(){closing=true;alertTimer.Stop();updateTimer.Stop();alerts.Flush();if(desktopWindow!=null){desktopWindow.Close();desktopWindow=null;}SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;if(menu!=null)menu.Dispose();tray.Visible=false;tray.Dispose();trayIcon.Dispose();taskbar.Dispose();light.Dispose();capture.Stop(1500);}
+ internal void Exit(){if(closing)return;closing=true;if(updateTransfer!=null)updateTransfer.Cancel();if(window!=null)window.ClosePermanently();if(desktopWindow!=null)desktopWindow.Close();app.Shutdown();}
+ public void Dispose(){closing=true;alertTimer.Stop();updateTimer.Stop();alerts.Flush();if(desktopWindow!=null){desktopWindow.Close();desktopWindow=null;}SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;if(menu!=null)menu.Dispose();tray.Visible=false;tray.Dispose();trayIcon.Dispose();taskbar.Dispose();gateway.Dispose();light.Dispose();capture.Stop(1500);}
 }
 
 internal sealed class WidgetWindow:Window {
@@ -525,10 +616,15 @@ internal sealed class WidgetWindow:Window {
     case "widget.smoke.frame.capture":result=CaptureFrameForSmoke();break;
     case "widget.smoke.monitoring":result=runtime.MonitoringState();break;
     case "widget.sources":result=runtime.Sources();break;
+    case "widget.gateway.status":result=runtime.GatewayStatus();break;
     case "widget.windows.taskbar":runtime.OpenWindowsTaskbar();break;
     case "widget.data.open":runtime.OpenDataFolder();break;
     case "widget.updates.status":result=runtime.UpdateStatus;break;
     case "widget.updates.check":result=await runtime.CheckUpdates();break;
+    case "widget.updates.download":result=runtime.BeginDownloadUpdate();break;
+    case "widget.updates.install":result=runtime.BeginDownloadUpdate(true);break;
+    case "widget.updates.apply":result=runtime.BeginApplyUpdate();break;
+    case "widget.updates.cancel":result=runtime.CancelUpdate();break;
     case "widget.updates.releases":runtime.OpenReleasePage();break;
     case "widget.ready":AcceptRenderedView(Convert.ToInt32(((Dictionary<string,object>)msg["params"])["epoch"]));break;
     case "widget.load-failed":ShowError("无法加载小组件设置。\n"+Convert.ToString(((Dictionary<string,object>)msg["params"])["error"]));break;

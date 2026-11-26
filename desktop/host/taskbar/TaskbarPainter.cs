@@ -10,8 +10,9 @@ using System.Runtime.InteropServices;
 internal sealed class TaskbarPainter:IDisposable {
  const int S=4, DigitXPhases=8, DigitBlurPad=18;int width,height;readonly bool dark;readonly PrivateFontCollection latin=new PrivateFontCollection(),medium=new PrivateFontCollection(),han=new PrivateFontCollection();readonly Dictionary<string,Bitmap> glyphs=new Dictionary<string,Bitmap>();readonly Dictionary<Bitmap,int> inkTop=new Dictionary<Bitmap,int>();readonly Dictionary<Font,int> referenceBottom=new Dictionary<Font,int>();
  readonly Dictionary<Tuple<char,float,int,int,int>,DigitInk> digitInk=new Dictionary<Tuple<char,float,int,int,int>,DigitInk>();
+ readonly Dictionary<Tuple<string,float,int>,DigitInk> unitInk=new Dictionary<Tuple<string,float,int>,DigitInk>();
  readonly List<DigitDraw> digitQueue=new List<DigitDraw>(32);
- sealed class DigitInk {internal Bitmap Image;internal int Foot,Offset;}
+ sealed class DigitInk {internal Bitmap Image;internal int Foot,Offset,Left,Right;}
  struct DigitDraw {internal DigitInk Ink;internal int X,Y;internal double Opacity;internal Rectangle Clip;internal Color? Tint;}
  float renderScaleX;
  internal int HoverSlot=-1,DisplaySlots=0,CellWidth=TaskbarSettings.CellWidth;internal bool Compact=false;internal float ContentShift=0;internal TaskbarHistory History;
@@ -42,11 +43,21 @@ internal sealed class TaskbarPainter:IDisposable {
    bottom=0;var data=source.LockBits(new Rectangle(0,0,source.Width,source.Height),ImageLockMode.ReadOnly,PixelFormat.Format32bppArgb);var pixels=new byte[source.Width*source.Height*4];Marshal.Copy(data.Scan0,pixels,0,pixels.Length);source.UnlockBits(data);for(int y=source.Height-1;y>=0&&bottom==0;y--)for(int x=0;x<source.Width;x++)if(pixels[(y*source.Width+x)*4+3]>0){bottom=y+1;break;}
   }referenceBottom[font]=bottom;return bottom;
  }
- internal const float ReadoutCenter=8.5f, ReadoutGap=6f, ReadoutUnitGap=3f;
+ const float ReadoutUnitGap=3f, UsedNameGap=7f;
+ internal const float DesktopValueGapLimit=10f;
  float CenteredBottom(string text,Font font,Color color,float center){
   if(string.IsNullOrEmpty(text))return center;
   var ink=Ink(text,font,color);var align=Ink(text.Replace("/",""),font,color);
   return center+(inkTop[align]+align.Height-inkTop[ink]-ink.Height*.5f)/S;
+ }
+ static string LabelBody(string text){return text.Replace('g','o').Replace('j','i').Replace('p','o').Replace('q','o').Replace('y','v');}
+ float LabelBottom(string text,Font font,Color color,float center){
+  if(string.IsNullOrEmpty(text))return center;
+  // Center the body of Latin letters, not the drop of g/j/p/q/y (e.g. Ping).
+  string body=IsAscii(text)?LabelBody(text):text;if(body==text)return CenteredBottom(text,font,color,center);
+  var guide=Ink(body,font,color);float middle=inkTop[guide]+guide.Height*.5f;
+  var original=Ink(text,font,color);
+  return center+(inkTop[original]+original.Height-middle)/S;
  }
  void Put(Graphics g,string text,Font font,Color color,float x,float bottom){if(string.IsNullOrEmpty(text))return;var align=Ink(text.Replace("/",""),font,color);int foot=inkTop[align]+align.Height;var ink=Ink(text,font,color);float y=bottom+(inkTop[ink]-foot)/(float)S;g.DrawImage(ink,new RectangleF(x,y,ink.Width/(float)S,ink.Height/(float)S));}
  // Rasterize each digit once in output pixels. Anchor the last visible ink row,
@@ -82,19 +93,16 @@ internal sealed class TaskbarPainter:IDisposable {
    }
   }
   int w=Math.Max(1,(int)Math.Round(source.Width*renderScaleX/S)),h=Math.Max(1,(int)Math.Round(source.Height*sy/S));
-  var image=phase<0?new Bitmap(w,h,PixelFormat.Format32bppPArgb):DigitPhaseMask(source,w,h,phase);
-  if(phase<0)using(var g=Graphics.FromImage(image)){g.CompositingMode=CompositingMode.SourceCopy;g.InterpolationMode=InterpolationMode.HighQualityBicubic;g.PixelOffsetMode=PixelOffsetMode.HighQuality;g.DrawImage(source,new Rectangle(0,0,w,h),0,0,source.Width,source.Height,GraphicsUnit.Pixel);}
-  int foot=0,faint=0;for(int y=0;y<h;y++)for(int x=0;x<image.Width;x++){int alpha=image.GetPixel(x,y).A;if(alpha>0)faint=y+1;if(alpha>100)foot=y+1;}
-  if(foot==0)foot=Math.Max(1,faint);
+  var image=phase<0?ScaleInk(source,w,h):DigitPhaseMask(source,w,h,phase);
+  int foot=VisibleFoot(image);
   bool numeric=glyph>='0'&&glyph<='9'||glyph=='.';
   int offset=numeric?0:(int)Math.Round((inkTop[source]+source.Height-ReferenceBottom(valueFont))*sy/S);
   if(phase>=0)foot=PhysicalDigit(glyph,0).Foot;
   if(foot<h){var cropped=image.Clone(new Rectangle(0,0,image.Width,foot),PixelFormat.Format32bppPArgb);image.Dispose();image=cropped;}
-  digitInk[key]=cached=new DigitInk{Image=image,Foot=foot,Offset=offset};return cached;
+  digitInk[key]=cached=RestInk(image,foot,offset);return cached;
  }
- void Digit(char glyph,float x,float bottom,double opacity,float displacement,Rectangle clip,int blur=0,Color? tint=null,bool networkPhase=false){
-  if(opacity<=0||clip.Width<=0||clip.Height<=0)return;float sy=height/38f;
-  DigitInk ink;int left;
+ DigitInk PositionedDigit(char glyph,float x,int blur,bool networkPhase,out int left){
+  DigitInk ink;
   if(networkPhase&&(glyph>='0'&&glyph<='9'||glyph=='.')){
    var rest=PhysicalDigit(glyph,0);
    double exactLeft=(x+Advance(glyph)*.5)*renderScaleX-rest.Image.Width*.5;
@@ -106,13 +114,61 @@ internal sealed class TaskbarPainter:IDisposable {
    ink=PhysicalDigit(glyph,blur);
    left=(int)Math.Round(x*renderScaleX+(Advance(glyph)*renderScaleX-ink.Image.Width)/2f);
   }
+  return ink;
+ }
+ // Only the desktop compacts surplus ink gaps. Work backwards from the final
+ // digit so the unit, decimal suffix and right edge never inherit a correction.
+ int[] DesktopDigitOffsets(string text,float x,bool networkPhase){
+  if(text.Length<2||networkPhase)return null;
+  var left=new int[text.Length];var right=new int[text.Length];var offsets=new int[text.Length];
+  float cursor=x;
+  for(int i=0;i<text.Length;i++){
+   int px;var ink=PositionedDigit(text[i],cursor,0,false,out px);left[i]=px+ink.Left;right[i]=px+ink.Right;cursor+=Advance(text[i]);
+  }
+  int target=(int)Math.Round(2*renderScaleX),limit=Math.Max(1,(int)Math.Round(2*renderScaleX));
+  for(int i=text.Length-2;i>=0;i--){
+   if(text[i]<'0'||text[i]>'9'||text[i+1]<'0'||text[i+1]>'9')continue;
+   offsets[i]=Math.Min(limit,Math.Max(0,left[i+1]+offsets[i+1]-right[i]-target));
+  }
+  return offsets;
+ }
+ void Digit(char glyph,float x,float bottom,double opacity,float displacement,Rectangle clip,int blur=0,Color? tint=null,bool networkPhase=false,int valueShift=0){
+  if(opacity<=0||clip.Width<=0||clip.Height<=0)return;float sy=height/38f;
+  int left;var ink=PositionedDigit(glyph,x,blur,networkPhase,out left);
   int foot=(int)Math.Round(bottom*sy)+ink.Offset;
   if(glyph=='—'||glyph=='…'){
    var rest=PhysicalDigit(glyph,0);var digit=PhysicalDigit('0',0);
    foot=(int)Math.Round(bottom*sy+(rest.Image.Height-digit.Image.Height)/2f);
   }
   // Displacement is relative to the same anchored position and never saved in the glyph cache.
-  digitQueue.Add(new DigitDraw{Ink=ink,X=left,Y=foot-ink.Foot+(int)Math.Round(displacement*sy),Opacity=opacity,Clip=clip,Tint=tint});
+  digitQueue.Add(new DigitDraw{Ink=ink,X=left+valueShift,Y=foot-ink.Foot+(int)Math.Round(displacement*sy),Opacity=opacity,Clip=clip,Tint=tint});
+ }
+ static Bitmap ScaleInk(Bitmap source,int w,int h){
+  var image=new Bitmap(w,h,PixelFormat.Format32bppPArgb);
+  using(var g=Graphics.FromImage(image)){g.CompositingMode=CompositingMode.SourceCopy;g.InterpolationMode=InterpolationMode.HighQualityBicubic;g.PixelOffsetMode=PixelOffsetMode.HighQuality;g.DrawImage(source,new Rectangle(0,0,w,h),0,0,source.Width,source.Height,GraphicsUnit.Pixel);}
+  return image;
+ }
+ static int VisibleFoot(Bitmap image){
+  int foot=0,faint=0;
+  for(int y=0;y<image.Height;y++)for(int x=0;x<image.Width;x++){int alpha=image.GetPixel(x,y).A;if(alpha>0)faint=y+1;if(alpha>100)foot=y+1;}
+  return foot>0?foot:Math.Max(1,faint);
+ }
+ static DigitInk RestInk(Bitmap image,int foot,int offset=0){
+  int left=image.Width,right=0;
+  for(int y=0;y<image.Height;y++)for(int x=0;x<image.Width;x++)if(image.GetPixel(x,y).A>100){left=Math.Min(left,x);right=Math.Max(right,x+1);}
+  return new DigitInk{Image=image,Foot=foot,Offset=offset,Left=right>left?left:0,Right=right>left?right:image.Width};
+ }
+ DigitInk PhysicalUnit(string text){
+  float sy=height/38f;var key=Tuple.Create(text,renderScaleX,height);DigitInk ink;
+  if(!unitInk.TryGetValue(key,out ink)){
+   var source=Ink(text,unitFont,unitColor);var image=ScaleInk(source,Math.Max(1,(int)Math.Round(source.Width*renderScaleX/S)),Math.Max(1,(int)Math.Round(source.Height*sy/S)));
+   ink=RestInk(image,VisibleFoot(image));unitInk.Add(key,ink);
+  }
+  return ink;
+ }
+ void Unit(string text,int numericRight,float gap,float bottom,Color? tint){
+  var ink=PhysicalUnit(text);float sy=height/38f;
+  digitQueue.Add(new DigitDraw{Ink=ink,X=numericRight+(int)Math.Round(gap*renderScaleX,MidpointRounding.AwayFromZero)-ink.Left,Y=(int)Math.Round(bottom*sy)-ink.Foot,Opacity=1,Clip=new Rectangle(0,0,width,height),Tint=tint});
  }
  void CompositeDigits(Graphics g){
   g.InterpolationMode=InterpolationMode.NearestNeighbor;g.PixelOffsetMode=PixelOffsetMode.Half;
@@ -133,14 +189,63 @@ internal sealed class TaskbarPainter:IDisposable {
   return RenderCore(sample,previous,options,progress,chrome,content,options.Modules(page,slots,Compact),width/(float)TaskbarSettings.LogicalWidth(slots,CellWidth),ContentShift,null,-1);
  }
  // The desktop renders the same taskbar ink at the same scale. Only the outside shell differs.
- internal Bitmap RenderDesktopRow(TaskbarSnapshot sample,TaskbarSettings options,TaskbarModule[] modules,float scale,bool showUnits,float[] origins){
-  return RenderCore(sample,null,options,1,false,true,modules,scale,0,null,-1,!showUnits,origins);
+ internal Bitmap RenderDesktopRow(TaskbarSnapshot sample,TaskbarSettings options,TaskbarModule[] modules,float scale,bool showUnits,float[] origins,int[] valueShifts=null){
+  return RenderCore(sample,null,options,1,false,true,modules,scale,0,null,-1,!showUnits,origins,valueShifts);
+ }
+ internal int[][] DesktopValueShifts(TaskbarSnapshot sample,TaskbarSettings options,TaskbarModule[,] modules,int rows,int cols,float scale,bool showUnits,float[] origins){
+  renderScaleX=scale;
+  var slots=new TaskbarModule[rows*3];var shifts=new int[rows][];
+  for(int r=0;r<rows;r++){shifts[r]=new int[3];for(int c=0;c<cols;c++)slots[r*3+c]=modules[r,c];}
+  int maxGap=(int)Math.Round(DesktopValueGapLimit*scale);
+  for(int c=0;c<cols;c++){
+   var readings=new List<Tuple<int,bool,int,int,int>>(rows);
+   for(int r=0;r<rows;r++){
+    int i=r*3+c;var m=slots[i];if(m==null||m.Parts.Length!=1||m.Parts[0]!="number")continue;
+    var cell=MeasureCell(sample,options,slots,i,!showUnits,true);string text=cell.Text;
+    if(string.IsNullOrEmpty(text)||(text!="—"&&!text.All(ch=>ch>='0'&&ch<='9'||ch=='.'||ch=='-')))continue;
+    float advance=NumberWidth(text),x=origins[c]+cell.NumberX+cell.NumberTrack-advance;
+    bool phase=UseNetworkPhase(m.Metric);char last=text[text.Length-1];int left,right;
+    var firstInk=PositionedDigit(text[0],x,0,phase,out left);
+    var lastInk=PositionedDigit(last,x+advance-Advance(last),0,phase,out right);
+    var offsets=DesktopDigitOffsets(text,x,phase);
+    left+=firstInk.Left+(offsets==null?0:offsets[0]);right+=lastInk.Right;
+    string unit=showUnits?sample.ReadForDisplay(m.Metric,options).ConfiguredDisplay(options).Unit:"";
+    if(!string.IsNullOrEmpty(unit)){
+     if(AlignProblemMetric(m.Metric,options)){
+      var ink=PhysicalUnit(unit);
+      right+=(int)Math.Round(Math.Max(2,ReadoutUnitGap+options.Offset(m.Metric,"unitX"))*scale,MidpointRounding.AwayFromZero)+ink.Right-ink.Left;
+     }else right=Math.Max(right,(int)Math.Round((origins[c]+cell.UnitX+InkWidth(unit,unitFont,unitColor))*scale));
+    }
+    // A group can never move into the label, even if the upper anchor is close.
+    float label=cell.NameRight;bool used=IsUsedReadout(m.Metric,options);
+    int minLeft=(int)Math.Ceiling((origins[c]+label+(used?UsedNameGap:3))*scale);
+    readings.Add(Tuple.Create(r,text=="—",left,right,minLeft));
+   }
+   var taken=new bool[readings.Count];
+   for(int i=0;i<readings.Count;i++){
+    if(taken[i])continue;
+    var upper=readings[i];
+    for(int j=i+1;j<readings.Count;j++){
+     var lower=readings[j];int delta=upper.Item4-lower.Item4;
+     if(taken[j]||upper.Item2!=lower.Item2||Math.Abs(delta)>(upper.Item2?(int)Math.Round(5*scale):maxGap)||lower.Item3+delta<lower.Item5)continue;
+     shifts[lower.Item1][c]=delta;taken[j]=true;
+    }
+   }
+  }
+  return shifts;
+ }
+ static bool UseNetworkPhase(string id){
+#if ASTERHUB_WIDGET
+  return id=="down"||id=="up";
+#else
+  return false;
+#endif
  }
  internal TaskbarSqueezeLayout MeasureDesktopGrid(TaskbarSnapshot sample,TaskbarSettings options,TaskbarModule[] modules,bool showUnits){
   var cells=new TaskbarCellInk[modules.Length];
   for(int slot=0;slot<modules.Length;slot++){
    var module=modules[slot];if(module==null)continue;
-   cells[slot]=MeasureCell(sample,options,modules,slot,!showUnits);
+   cells[slot]=MeasureCell(sample,options,modules,slot,!showUnits,true);
   }
   return new TaskbarSqueezeLayout(modules,cells,DesktopGrid.Limit,48);
  }
@@ -155,32 +260,41 @@ internal sealed class TaskbarPainter:IDisposable {
   for(int i=0;i<modules.Length;i++)if(modules[i]!=null)cells[i]=MeasureCell(sample,options,modules,i);
   return new TaskbarSqueezeLayout(modules,cells);
  }
- TaskbarCellInk MeasureCell(TaskbarSnapshot sample,TaskbarSettings options,TaskbarModule[] modules,int i,bool omitUnit=false){
+ TaskbarCellInk MeasureCell(TaskbarSnapshot sample,TaskbarSettings options,TaskbarModule[] modules,int i,bool omitUnit=false,bool desktop=false){
   var module=modules[i];string id=module.Metric;var now=sample.Read(id);var display=sample.ReadForDisplay(id,options).ConfiguredDisplay(options);
   string label=module.Label(now.label??"");var parts=module.Parts;
   bool network=id=="up"||id=="down",arrow=label=="↑"||label=="↓",icon=label=="◇";
-  var nameFont=IsAscii(label)?labelFont:hanFont;
-  float labelWidth=arrow?7:icon?10.5f:InkWidth(label,nameFont,labelColor);
+  float labelWidth=arrow?7:icon?11.5f:label.Length==0?0:Ink(label,IsAscii(label)?labelFont:hanFont,labelColor).Width/(float)S;
+  float labelTrack=arrow||icon?18:network?39:label.Length>3?34:28;
+  // Use the preview tracks, extending them for longer custom labels before placing components.
+  float next=Math.Max(labelTrack,labelWidth+3);
   float track=Advance('0')*(network?4:3.6f);
   var cell=new TaskbarCellInk{NumberTrack=track,LabelX=options.Offset(id,"labelX"),GraphX=new float[parts.Length],Text=""};
-  cell.Include(cell.LabelX,labelWidth);float precedingRight=cell.LabelX+labelWidth;
-  float labelCenter=ReadoutCenter+options.Offset(id,"label");
-  if(arrow||icon)cell.HitArea(cell.LabelX,labelCenter-5.25f,labelWidth,labelCenter+5.25f);
-  else TextHit(cell,label,nameFont,labelColor,cell.LabelX,CenteredBottom(label,nameFont,labelColor,labelCenter));
+  cell.Include(cell.LabelX,labelWidth);float precedingRight=cell.LabelX+labelWidth;cell.NameRight=precedingRight;
+  float labelBottom=13.5f+options.Offset(id,"label");
+  if(arrow||icon)cell.HitArea(cell.LabelX,labelBottom-(arrow?8.6f:10.5f),labelWidth,labelBottom+(icon?1.5f:.6f));
+  else {var font=IsAscii(label)?labelFont:hanFont;
+   if(parts.Contains("number")&&AlignProblemMetric(id,options))labelBottom=LabelBottom(label,font,labelColor,ProblemCenter(options,id,omitUnit?"":display.Unit)+options.Offset(id,"label"));
+   TextHit(cell,label,font,labelColor,cell.LabelX,labelBottom);
+  }
   for(int j=0;j<parts.Length;j++){
    if(parts[j]=="number"){
-    cell.NumberX=precedingRight+Math.Max(4,ReadoutGap+options.Offset(id,"numberX"));
+    float nudge=network?0:-Advance('0');
+    // Reserve the widest fitted number before shifting it. A shorter sample must never move its unit.
+    float origin=Math.Max(next,precedingRight+3-nudge);
+    cell.NumberX=Math.Max(precedingRight+3,origin+nudge+options.Offset(id,"numberX"));
+    cell.UnitX=Math.Max(cell.NumberX+track+2,origin+nudge+track+3+options.Offset(id,"unitX"));
+    float extraShift=ReadoutLeftShift(id,cell.NumberX,track,precedingRight);
+    cell.NumberX-=extraShift;cell.UnitX-=extraShift;
+    if(j==0&&IsUsedReadout(id,options)){
+     // Protect the gap at the widest number without moving the name or its column anchor.
+     float correction=Math.Max(0,precedingRight+UsedNameGap-cell.NumberX);
+     cell.NumberX+=correction;cell.UnitX+=correction;
+    }
     cell.Text=FitNumber(display,track);
-    float advance=NumberWidth(cell.Text),left=cell.NumberX;
-    float unitGap=Math.Max(2,ReadoutUnitGap+options.Offset(id,"unitX"));
-    cell.UnitX=cell.NumberX+advance+unitGap;
-    string unitId=id=="memory"&&options.memoryMode!="percent"?"memoryUsed":id;
-    bool reserveUnit=!omitUnit&&!(options.hidePercent&&UnitFamily(id).All(u=>u=="%"))&&!(options.hideNetworkUnit&&network);
-    float unitSpace=reserveUnit?UnitSpace(unitId,options.networkBits):0;
-    precedingRight=cell.NumberX+track+(unitSpace>0?unitGap+unitSpace:0);
-    cell.Include(cell.NumberX,precedingRight-cell.NumberX);
+    float advance=NumberWidth(cell.Text),left=cell.NumberX+track-advance;
     float numberLeft=float.PositiveInfinity,numberRight=float.NegativeInfinity,numberTop=float.PositiveInfinity,numberFoot=float.NegativeInfinity;
-    float numberBottom=NumberBottom(options,id);
+    float numberBottom=13.5f+options.Offset(id,"number");
     foreach(char glyph in cell.Text){
      float step=Advance(glyph);var shape=Ink(glyph.ToString(),valueFont,valueColor);float ink=shape.Width/(float)S,inkLeft=left+(step-ink)/2;
      cell.Include(inkLeft,ink);left+=step;
@@ -192,12 +306,14 @@ internal sealed class TaskbarPainter:IDisposable {
     cell.HitArea(numberLeft,numberTop,numberRight-numberLeft,numberFoot);
     if(!omitUnit){
      cell.Include(cell.UnitX,InkWidth(display.Unit,unitFont,unitColor));
-     TextHit(cell,display.Unit,unitFont,unitColor,cell.UnitX,CenteredBottom(display.Unit,unitFont,unitColor,ReadoutCenter+options.Offset(id,"unit")));
+     TextHit(cell,display.Unit,unitFont,unitColor,cell.UnitX,13.5f+options.Offset(id,AlignProblemMetric(id,options)?"number":"unit"));
     }
+    // The desktop canvas is cached across samples, unlike the v0.1.0 taskbar frame.
+    if(desktop){cell.Include(cell.NumberX,track+2);if(!omitUnit)cell.Include(cell.UnitX,UnitSpace(id=="memory"&&options.memoryMode!="percent"?"memoryUsed":id,options.networkBits));}
+    precedingRight=cell.UnitX+extraShift+Math.Max(16,UnitSpace(id=="memory"&&options.memoryMode!="percent"?"memoryUsed":id,options.networkBits));next=precedingRight+5;
    }else{
-    float gx=precedingRight+Math.Max(4,ReadoutGap+options.Offset(id,"graphX"));cell.GraphX[j]=gx;
+    float gx=Math.Max(precedingRight+3.6f,next+.75f+options.Offset(id,"graphX"));cell.GraphX[j]=gx;
     float graphY=10+options.Offset(id,"graph"),graphLeft=gx,graphWidth=22,graphTop=graphY-5.6f,graphBottom=graphY+3.6f;
-    cell.Include(gx,parts[j]=="bars"&&(id=="gpu"||id=="memory"||id=="gpuMemory")?14:23);
     bool cores=parts[j]=="bars"&&id=="cpu"&&sample.cpuCores.Length>0;
     bool ring=parts[j]=="bars"&&(id=="gpu"||id=="memory"||id=="gpuMemory");
     bool ticks=parts[j]=="bars"&&now.unit=="%"&&id!="cpu"&&!ring;
@@ -211,7 +327,8 @@ internal sealed class TaskbarPainter:IDisposable {
      else if(ticks){graphLeft-=.55f;graphWidth=21.8f;graphTop=graphY-2.55f;}
      cell.Include(graphLeft,graphWidth);cell.HitArea(graphLeft,graphTop,graphWidth,graphBottom);
     }
-    precedingRight=gx+(ring?14:23);
+    if(desktop)cell.Include(gx-1,25);
+    precedingRight=gx+23;next=gx+TaskbarSqueezeLayout.GraphSpace-.75f;
    }
   }
   if(float.IsInfinity(cell.Left))cell.Include(0,1);
@@ -244,9 +361,10 @@ internal sealed class TaskbarPainter:IDisposable {
   }
   return output;
  }
- Bitmap RenderCore(TaskbarSnapshot sample,TaskbarSnapshot previous,TaskbarSettings options,double progress,bool chrome,bool content,TaskbarModule[] modules,float scale,float shift,TaskbarSqueezeFrame frame,int movingColumn,bool omitUnit=false,float[] desktopOrigins=null){
+ Bitmap RenderCore(TaskbarSnapshot sample,TaskbarSnapshot previous,TaskbarSettings options,double progress,bool chrome,bool content,TaskbarModule[] modules,float scale,float shift,TaskbarSqueezeFrame frame,int movingColumn,bool omitUnit=false,float[] desktopOrigins=null,int[] valueShifts=null){
   int slots=modules.Length,cols=slots/2;renderScaleX=scale;digitQueue.Clear();
   if(digitInk.Count>=384){foreach(var item in digitInk.Values)item.Image.Dispose();digitInk.Clear();}
+  if(unitInk.Count>=96){foreach(var item in unitInk.Values)item.Image.Dispose();unitInk.Clear();}
   // At 200% the 2x intermediate still supplies four samples per logical pixel.
   int supersample=frame!=null&&scale>=1.75f?2:S;
   using(var high=new Bitmap(width*supersample,height*supersample,PixelFormat.Format32bppPArgb)){
@@ -257,10 +375,10 @@ internal sealed class TaskbarPainter:IDisposable {
      if(frame!=null&&((movingColumn<0?frame.Departing[col]:col!=movingColumn)||(movingColumn<0&&!frame.Layout.Fits(frame,col,shift,width/scale))))continue;
      var module=modules[i];if(module==null)continue;string id=module.Metric;
      var now=sample.Read(id);var old=previous==null?null:previous.Read(id);var label=module.Label(now.label??"");
-     var cell=frame!=null&&frame.Layout.Cells!=null?frame.Layout.Cells[i]:MeasureCell(sample,options,modules,i,omitUnit);
+     var cell=frame!=null&&frame.Layout.Cells!=null?frame.Layout.Cells[i]:MeasureCell(sample,options,modules,i,omitUnit,desktopOrigins!=null);
      if(cell==null)continue;
      float x=desktopOrigins==null?(frame==null?18+col*CellWidth:frame.X[col])+shift:desktopOrigins[col],top=2+i/cols*17;
-     float labelCenter=top+ReadoutCenter+options.Offset(id,"label"),numberBottom=top+NumberBottom(options,id),unitCenter=top+ReadoutCenter+options.Offset(id,"unit");
+     float bottom=top+13.5f+options.Offset(id,"label"),numberBottom=top+13.5f+options.Offset(id,"number"),unitBottom=top+13.5f+options.Offset(id,"unit");
      var display=sample.ReadForDisplay(id,options).ConfiguredDisplay(options);var priorDisplay=previous==null?display:previous.ReadForDisplay(id,options).ConfiguredDisplay(options);var parts=module.Parts;
      float left=x+cell.Left-2,right=x+cell.Right+2;
      if(chrome&&options.clickDetails&&i==HoverSlot){
@@ -271,23 +389,28 @@ internal sealed class TaskbarPainter:IDisposable {
      var graphInk=OverrideColor(options,id,"graph");
      for(int j=0;j<parts.Length;j++)if(parts[j]!="number")DrawGraph(g,parts[j],sample,now,x+cell.GraphX[j],top+10+options.Offset(id,"graph"),options.reduced,graphInk);
      float labelX=x+cell.LabelX;
-     if(label=="↑"||label=="↓"){float sign=label=="↑"?-1:1,arrowY=labelCenter,tip=arrowY+sign*4;using(var pen=new Pen(nameInk,1.2f)){pen.StartCap=pen.EndCap=LineCap.Round;g.DrawLine(pen,labelX+3.5f,arrowY-sign*4,labelX+3.5f,tip);g.DrawLines(pen,new[]{new PointF(labelX+.75f,tip-sign*2.75f),new PointF(labelX+3.5f,tip),new PointF(labelX+6.25f,tip-sign*2.75f)});}}
-     else if(label=="◇")DrawMetricIcon(g,id,labelX,labelCenter-5.25f,nameInk);
-     else {var font=IsAscii(label)?labelFont:hanFont;Put(g,label,font,nameInk,labelX,CenteredBottom(label,font,nameInk,labelCenter));}
+     bool problem=parts.Contains("number")&&AlignProblemMetric(id,options);
+     float opticalCenter=problem?top+ProblemCenter(options,id,omitUnit?"":display.Unit)+options.Offset(id,"label"):bottom-4;
+     if(label=="↑"||label=="↓"){float sign=label=="↑"?-1:1,arrowY=opticalCenter,tip=arrowY+sign*4;using(var pen=new Pen(nameInk,1.2f)){pen.StartCap=pen.EndCap=LineCap.Round;g.DrawLine(pen,labelX+3.5f,arrowY-sign*4,labelX+3.5f,tip);g.DrawLines(pen,new[]{new PointF(labelX+.75f,tip-sign*2.75f),new PointF(labelX+3.5f,tip),new PointF(labelX+6.25f,tip-sign*2.75f)});}}
+     else if(label=="◇")DrawMetricIcon(g,id,labelX,problem?opticalCenter-5.25f:bottom-10,nameInk);
+     else {var font=IsAscii(label)?labelFont:hanFont;Put(g,label,font,nameInk,labelX,problem?LabelBottom(label,font,nameInk,opticalCenter):bottom);}
      if(!parts.Contains("number"))continue;
-     string text=cell.Text,prior=FitNumber(priorDisplay,cell.NumberTrack);float advance=NumberWidth(text),cx=x+cell.NumberX;
-     if(!omitUnit&&!string.IsNullOrEmpty(display.Unit))Put(g,display.Unit,unitFont,readingInk??unitColor,x+cell.UnitX,CenteredBottom(display.Unit,unitFont,readingInk??unitColor,unitCenter));
+     string text=cell.Text,prior=FitNumber(priorDisplay,cell.NumberTrack);float advance=NumberWidth(text),cx=x+cell.NumberX+cell.NumberTrack-advance;
+     int valueShift=valueShifts==null?0:valueShifts[col];
+     if(!problem&&!omitUnit)Put(g,display.Unit,unitFont,readingInk??unitColor,x+cell.UnitX+valueShift/scale,unitBottom);
      var clip=Rectangle.FromLTRB((int)Math.Floor((cx-1)*renderScaleX),(int)Math.Floor((top+.5f)*height/38f),(int)Math.Ceiling((cx+advance+1)*renderScaleX),(int)Math.Ceiling((top+16.5f)*height/38f));
-     #if ASTERHUB_WIDGET
-     bool networkPhase=id=="down"||id=="up";
-#else
-     const bool networkPhase=false;
-#endif
+     clip.Offset(valueShift,0);
+     bool networkPhase=UseNetworkPhase(id);
+     bool showUnit=problem&&!omitUnit&&!string.IsNullOrEmpty(display.Unit);int numericRight=int.MinValue;
+     var desktopOffsets=desktopOrigins==null?null:DesktopDigitOffsets(text,cx,networkPhase);
      for(int at=0;at<text.Length;at++){
-      char ch=text[at];float cellWidth=Advance(ch);bool moving=options.motion&&!options.reduced&&options.numberMotion!="direct"&&progress<1&&old!=null&&now.animate&&!now.stale&&!old.stale&&display.Unit==priorDisplay.Unit&&TaskbarValue.GlyphChanges(prior,text,at);
+      char ch=text[at];float cellWidth=Advance(ch);
+      if(showUnit){int inkLeft;var rest=PositionedDigit(ch,cx,0,networkPhase,out inkLeft);numericRight=Math.Max(numericRight,Math.Min(clip.Right,inkLeft+rest.Right+valueShift));}
+      bool moving=options.motion&&!options.reduced&&options.numberMotion!="direct"&&progress<1&&old!=null&&now.animate&&!now.stale&&!old.stale&&display.Unit==priorDisplay.Unit&&TaskbarValue.GlyphChanges(prior,text,at);
       if(moving){var column=Rectangle.Intersect(clip,Rectangle.FromLTRB((int)Math.Round(cx*renderScaleX),clip.Top,(int)Math.Round((cx+cellWidth)*renderScaleX),clip.Bottom));char was=' ';string key=TaskbarValue.PlaceKey(text,at);for(int j=0;j<prior.Length;j++)if(TaskbarValue.PlaceKey(prior,j)==key)was=prior[j];int direction=now.value<old.value?-1:1;float travel=options.numberMotion=="fade"?0:options.numberMotion=="slide"?8:14;int blurIn=options.numberMotion=="current"?(progress<.45?2:progress<.78?1:0):0,blurOut=options.numberMotion=="current"?(progress>.55?2:progress>.25?1:0):0;if(was!=' ')Digit(was,cx,numberBottom,1-progress,(float)(-direction*travel*progress),column,blurOut,readingInk,networkPhase);Digit(ch,cx,numberBottom,progress,(float)(direction*travel*(1-progress)),column,blurIn,readingInk,networkPhase);}
-      else Digit(ch,cx,numberBottom,1,0,clip,0,readingInk,networkPhase);cx+=cellWidth;
+      else Digit(ch,cx,numberBottom,1,0,clip,0,readingInk,networkPhase,valueShift+(desktopOffsets==null?0:desktopOffsets[at]));cx+=cellWidth;
      }
+     if(showUnit&&numericRight!=int.MinValue)Unit(display.Unit,numericRight,Math.Max(2,ReadoutUnitGap+options.Offset(id,"unitX")),numberBottom,readingInk);
     }
    }
    var output=new Bitmap(width,height,PixelFormat.Format32bppPArgb);using(var g=Graphics.FromImage(output)){g.InterpolationMode=InterpolationMode.HighQualityBicubic;g.PixelOffsetMode=PixelOffsetMode.HighQuality;g.DrawImage(high,new Rectangle(0,0,width,height));CompositeDigits(g);}return output;
@@ -371,7 +494,7 @@ internal sealed class TaskbarPainter:IDisposable {
   case "cpuFrequency":case "gpuFrequency":return new[]{"GHz","THz","PHz","EHz"};
   case "cpuTemperature":case "gpuTemperature":return new[]{"°C"};
   case "gpuPower":return new[]{"W","kW","MW","GW"};
-  case "memoryUsed":case "memoryFree":return new[]{"GB","TB","PB","EB"};
+  case "memoryUsed":case "memoryFree":return new[]{"G","TB","PB","EB"};
   case "ping":return new[]{"ms"};default:return new[]{"%"};
  }}
  static bool IsPair(string a,string b){if((a=="cpuFrequency"&&b=="gpuFrequency")||(b=="cpuFrequency"&&a=="gpuFrequency"))return true;return a=="up"&&b=="down"||a=="down"&&b=="up"||a=="storageRead"&&b=="storageWrite"||a=="storageWrite"&&b=="storageRead";}
@@ -386,7 +509,13 @@ internal sealed class TaskbarPainter:IDisposable {
   if(track>=Advance('—'))widest=Math.Max(widest,Advance('—'));
   return Math.Min(digit/2,Math.Max(0,numberStart+track-Math.Min(track,widest)-previousRight-1));
  }
- float NumberBottom(TaskbarSettings options,string id){return ReadoutCenter+options.Offset(id,"number")+Ink("0",valueFont,valueColor).Height/(2f*S);}
+ static bool IsUsedReadout(string id,TaskbarSettings options){return id=="memoryUsed"||id=="memory"&&options.memoryMode=="used";}
+ static bool AlignProblemMetric(string id,TaskbarSettings options){return id=="ping"||id=="loss"||id=="gpuPower"||IsUsedReadout(id,options);}
+ float ProblemCenter(TaskbarSettings options,string id,string unit){
+  int digitHeight=Ink("0",valueFont,valueColor).Height;
+  int unitHeight=string.IsNullOrEmpty(unit)?0:Ink(unit,unitFont,unitColor).Height;
+  return 13.5f+options.Offset(id,"number")-Math.Max(unitHeight,digitHeight)/(2f*S);
+ }
  internal static float NumberWidth(string text){float width=0;foreach(char ch in text)width+=Advance(ch);return width;}
  internal static string FitNumber(TaskbarDisplay display,float available){
   if(NumberWidth(display.Text)<=available+.001f)return display.Text;
@@ -401,5 +530,5 @@ internal sealed class TaskbarPainter:IDisposable {
  }
  internal static void Layer(Graphics g,Bitmap image,float x,double alpha){if(image==null||alpha<=0)return;using(var attributes=new ImageAttributes()){var matrix=new ColorMatrix();matrix.Matrix33=(float)Math.Min(1,alpha);attributes.SetColorMatrix(matrix);g.DrawImage(image,new Rectangle((int)Math.Round(x),0,image.Width,image.Height),0,0,image.Width,image.Height,GraphicsUnit.Pixel,attributes);}}
  static bool IsAscii(string text){foreach(char c in text)if(c>127)return false;return true;}
- public void Dispose(){foreach(var value in digitInk.Values)value.Image.Dispose();digitInk.Clear();foreach(var b in glyphs.Values)b.Dispose();glyphs.Clear();labelFont.Dispose();valueFont.Dispose();hanFont.Dispose();unitFont.Dispose();latin.Dispose();medium.Dispose();han.Dispose();}
+ public void Dispose(){foreach(var value in digitInk.Values)value.Image.Dispose();digitInk.Clear();foreach(var item in unitInk.Values)item.Image.Dispose();unitInk.Clear();foreach(var b in glyphs.Values)b.Dispose();glyphs.Clear();labelFont.Dispose();valueFont.Dispose();hanFont.Dispose();unitFont.Dispose();latin.Dispose();medium.Dispose();han.Dispose();}
 }

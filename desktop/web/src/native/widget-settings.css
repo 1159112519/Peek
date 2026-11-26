@@ -1,6 +1,6 @@
 /* The standalone window: one content column, an editor work area, and persistent actions. */
 :root[data-widget-window=true],:root[data-widget-window=true] :is(body,#root){height:100%;min-height:0;overflow:clip}
-:root[data-widget-window=true]{--text-control:12px;--widget-page-title-text:18px;--widget-caption-text:11px;--select-trigger-height:28px;--select-trigger-padding-block:2px;--tool-navigation-text:var(--text-control);--widget-subheading-text:14px;--settings-round-corner:var(--radius-control);--settings-pill-corner:999px}
+:root[data-widget-window=true]{--text-control:13px;--widget-page-title-text:19px;--widget-caption-text:12px;--select-trigger-height:28px;--select-trigger-padding-block:2px;--tool-navigation-text:var(--text-control);--widget-subheading-text:15px;--settings-round-corner:var(--radius-control);--settings-pill-corner:999px}
 :root[data-widget-window=true] body{background:var(--bg);margin:0}
 .widget-settings-window.native-preferences{
  --widget-inset:22px;--widget-content:632px;--widget-section-gap:19px;--widget-card-inset:18px;
@@ -29,7 +29,8 @@
  border-radius:var(--settings-round-corner);background:var(--surface2);
 }
 .widget-settings-window .widget-settings-group>h4{margin:0 0 9px;font-size:var(--widget-subheading-text);line-height:1.5;font-weight:650}
-.widget-appearance-actions{display:flex;align-items:center;justify-content:center;gap:1px;padding:2px;border:1px solid var(--line);border-radius:var(--settings-round-corner);background:var(--surface);flex:none}
+.widget-appearance-actions{--appearance-inset:2px;--appearance-stroke:1px;display:flex;align-items:center;justify-content:center;gap:1px;padding:var(--appearance-inset);border:var(--appearance-stroke) solid var(--line);border-radius:var(--settings-round-corner);background:var(--surface);flex:none}
+.widget-settings-window .widget-appearance-actions>.icon-button{border-radius:max(0px,calc(var(--settings-round-corner) - var(--appearance-stroke) - var(--appearance-inset)))}
 .widget-settings-footer{grid-row:3;min-width:0;border-top:1px solid var(--line);background:var(--surface2);padding:9px var(--widget-inset)}
 .widget-settings-footer-inner{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;min-height:34px}
 .widget-settings-feedback{min-inline-size:0;overflow-wrap:anywhere;color:var(--muted)}
@@ -89,6 +90,11 @@
 .widget-settings-window .widget-inline-check>input{inline-size:14px;block-size:14px}
 
 .widget-about-identity{display:flex;align-items:center;gap:12px;padding-block:15px}
+/* Keep the existing check button's intrinsic size across action changes, including localized text. */
+.widget-about-identity>.widget-about-action{position:relative}
+.widget-about-action[data-alternate]>svg,.widget-about-action[data-alternate] .widget-about-action-reference{visibility:hidden}
+.widget-about-identity>.widget-about-action[data-alternate]>.button-content{position:static;transform:none}
+.widget-about-action-label{position:absolute;inset:0;display:grid;place-items:center;transform:translateY(.8px)}
 .widget-about-copy{flex:1;min-width:0}
 .widget-about-identity>.peek-about-icon,.widget-about-identity>.button{flex:none}
 .widget-settings-window .widget-about-identity h4{font-size:var(--widget-subheading-text);line-height:1.5;font-weight:650;margin:0 0 2px}
@@ -96,6 +102,7 @@
 .widget-about-status{display:flex;align-items:center;gap:7px;min-height:22px}
 .widget-about-status>svg{flex:none;color:var(--muted)}
 .widget-about-status[data-state=current]>svg{color:var(--success,var(--green))}
+.widget-update-progress{display:block;width:100%;height:6px;accent-color:var(--muted);margin:2px 0 7px}
 .widget-about-auto{cursor:pointer}
 .widget-desktop-fields{margin-block-start:10px}
 .widget-desktop-custom{display:grid;min-width:0}
@@ -134,7 +141,7 @@
 .widget-data-row>.button{line-height:20px}
 
 .peek-icon-choices{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;min-width:0;border:0;padding:0;margin:0}
-.peek-icon-choice{position:relative;display:grid;justify-items:center;align-content:center;gap:4px;min-height:62px;min-width:0;padding:4px 2px;border:1px solid transparent;border-radius:var(--settings-round-corner);font-size:11px;line-height:15px;cursor:pointer;text-align:center}
+.peek-icon-choice{position:relative;display:grid;justify-items:center;align-content:center;gap:4px;min-height:62px;min-width:0;padding:4px 2px;border:1px solid transparent;border-radius:var(--settings-round-corner);font-size:var(--widget-caption-text);line-height:15px;cursor:pointer;text-align:center}
 .peek-icon-choice:hover{background:var(--hover)}
 .peek-icon-choice[data-selected=true]{border-color:var(--line);background:var(--hover);color:var(--text)}
 .peek-icon-choice:has(:focus-visible){outline:2px solid var(--text);outline-offset:-2px}
@@ -150,11 +157,14 @@
 html[data-appearance-mode=dark] .peek-desktop-preview{--peek-shell:37 37 39;--peek-rim:rgba(99,99,104,.58);--peek-guide:rgba(224,224,229,.24);--peek-selection:rgba(224,224,229,.60);--peek-tint:rgba(224,224,229,.10);--widget-value:#e1e2e6;--widget-label:#e1e2e6;--widget-unit:#b3b5bc;--widget-accent:#82d7e9}
 .peek-desktop-preview[data-resizing=true]{transition:none}
 .peek-desktop-grid{position:absolute;top:8px;left:11px;overflow:hidden;transition:width 150ms cubic-bezier(.22,.74,.28,1),height 150ms cubic-bezier(.22,.74,.28,1)}
+/* Retain the stroke snapped across a fractional grid edge, not another slot. */
+.peek-desktop-preview:not([data-resizing=true]) .peek-desktop-grid{overflow:clip;overflow-clip-margin:1px}
 .peek-desktop-preview[data-resizing=true] .peek-desktop-grid{transition:none}
-.peek-desktop-slot{position:absolute;height:17px;overflow:hidden;display:flex;align-items:center;border-radius:5px;box-shadow:inset 0 0 0 1px transparent;transition:box-shadow 140ms ease-out,background-color 140ms ease-out}
+.peek-desktop-slot[data-guide=false]{visibility:hidden;pointer-events:none}
+.peek-desktop-slot{position:absolute;height:17px;display:flex;align-items:center;border-radius:5px;box-shadow:inset 0 0 0 1px transparent;transition:box-shadow 140ms ease-out,background-color 140ms ease-out}
 .peek-desktop-slot[data-guide=true]:hover{box-shadow:inset 0 0 0 1px var(--peek-guide)}
 .peek-desktop-slot[data-guide=true][data-selected=true]:hover,.peek-desktop-slot[data-guide=true][data-drop=true]{box-shadow:inset 0 0 0 1px var(--peek-selection);background:var(--peek-tint)}
-.tb42-editor .peek-desktop-slot>button,.tb42-editor .peek-desktop-slot>button:enabled:hover{border:0;border-radius:inherit;background:transparent;padding:0;min-height:0;display:flex;align-items:center;justify-content:flex-start;width:100%;height:100%;gap:0;color:var(--widget-label);overflow:hidden;cursor:grab}
+.tb42-editor .peek-desktop-slot>button,.tb42-editor .peek-desktop-slot>button:enabled:hover{border:0;border-radius:inherit;background:transparent;padding:0;min-height:0;display:flex;align-items:center;justify-content:flex-start;width:100%;height:100%;gap:0;color:var(--widget-label);cursor:grab}
 .tb42-editor .peek-desktop-slot>button:focus-visible{outline:1px solid var(--widget-label);outline-offset:-2px;border-radius:5px}
 .peek-desktop-empty{margin:auto;font-size:13px;opacity:.62}
 /* Resize targets stop at the padding, never on a readout or an empty slot. */
@@ -179,3 +189,15 @@ html[data-appearance-mode=dark] .peek-desktop-preview{--peek-shell:37 37 39;--pe
 .peek-desktop-position output{justify-self:end}
 .peek-desktop-position input{min-width:0;color:var(--text)}
 .peek-desktop-position .widget-group-note{margin:5px 0 0}
+
+/* Only Peek settings controls grow. SVG readouts in the live stages retain their original fonts. */
+.widget-settings-window .tb42-editor :is(button,select){font-size:var(--text-control)}
+/* Taskbar and desktop are two editors for the same parameter library. */
+.widget-settings-window .tb42-categories .control-label{font-size:12px}
+.widget-settings-window .tb42-editor :is(.tb42-hint,.tb42-typography){font-size:var(--text-control)}
+.widget-settings-window .tb42-editor .tb42-tune-value{font-size:var(--text-control);line-height:15px}
+.widget-settings-window .tb42-tune-value small{font-size:10px;line-height:11px}
+.widget-settings-window .tb42-editor .tb43-rail-nudge{font-size:15px}
+/* These optically placed glyphs must match the Canvas ink measurement.
+   Tabular alternates shift the narrow 1 into its neighbour. */
+.widget-settings-window [data-proportional-ink=true] .taskbar-cell-number text{font-variant-numeric:normal}

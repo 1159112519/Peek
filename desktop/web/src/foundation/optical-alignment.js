@@ -69,19 +69,38 @@ function widgetCheckboxFirstLine(node,context){
  const baseline=first.top+baselineFromRange(content,css),a=raster?.a??metrics.actualBoundingBoxAscent,d=raster?.d??metrics.actualBoundingBoxDescent;
  return {top:baseline-a,bottom:baseline+d,baseline,center:baseline+(raster?.center??((d-a)/2))};
 }
+// Center Peek's five labels as a group so selected and unselected tabs
+// retain one baseline, including after a language or DPI change.
+const widgetTabBar='.widget-settings-window .foundation-tool-navigation';
+function widgetTabBarOffset(nav,context){
+ let delta=0,count=0,current=0;
+ for(const label of nav.querySelectorAll(':scope > button > .tool-label')){
+  const box=label.parentElement.getBoundingClientRect(),ink=textInkBounds(label,context);
+  if(!box.height||!ink)continue;
+  current=parseFloat(getComputedStyle(label).top)||0;
+  delta+=(box.top+box.bottom-ink.top-ink.bottom)/2;count++;
+ }
+ if(!count)return null;
+ const ratio=window.devicePixelRatio||1;
+ return Math.max(-3,Math.min(3,Math.round((current+delta/count)*ratio)/ratio));
+}
 export function useOpticalAlignment(){useLayoutEffect(()=>{
  let alive=true;const queue=new Set(),context=document.createElement('canvas').getContext('2d');
  const measure=node=>{if(!node.isConnected||!context)return;
-  // The widget navigation shares one typographic baseline; centering each word separately bends it.
-  if(node.matches('.tool-label')&&node.closest('.widget-settings-window'))return;
+  if(node.matches(widgetTabBar)){
+   const offset=widgetTabBarOffset(node,context);if(offset==null)return;
+   const value=offset+'px';if(node.style.getPropertyValue('--label-optical-y')!==value)return [node,value];
+   return;
+  }
   const isWidgetCheckbox=node.matches(widgetCheckboxLabel);
   const anchor=isWidgetCheckbox?node.parentElement.querySelector(':scope > input[type=checkbox]'):node.classList.contains('table-optical-label')?node.closest('th'):node.closest('button,a,[role=option],.native-settings-result');if(!anchor)return;const box=anchor.getBoundingClientRect();if(!box.width||!box.height)return;
   const ink=isWidgetCheckbox?widgetCheckboxFirstLine(node,context):textInkBounds(node,context);if(!ink)return;const current=parseFloat(getComputedStyle(node).top)||0;
   const offset=isWidgetCheckbox?Math.round(Math.max(-3,Math.min(3,current+(box.top+box.bottom)/2-ink.center))*8)/8:node.classList.contains('preferences-nav-label')?centeredInkOffset(ink,box,current,window.devicePixelRatio||1):baselineCenteredOffset(ink,box,current,window.devicePixelRatio||1),value=offset+'px';if(node.style.getPropertyValue('--label-optical-y')!==value)return [node,value];
  };
  const flush=()=>{if(!alive||!queue.size)return;const changes=[...queue].map(measure);queue.clear();for(const change of changes)if(change)change[0].style.setProperty('--label-optical-y',change[1]);};
- const own=node=>{const label=node?.closest?.(selectors);if(label)queue.add(label);};
- const collect=node=>{if(node.nodeType!==1||node.dataset?.opticalMeasure!==undefined)return;own(node);node.querySelectorAll(selectors).forEach(n=>queue.add(n));};
+ const enqueue=label=>queue.add(label.matches('.tool-label')?(label.closest(widgetTabBar)??label):label);
+ const own=node=>{const label=node?.closest?.(selectors);if(label)enqueue(label);};
+ const collect=node=>{if(node.nodeType!==1||node.dataset?.opticalMeasure!==undefined)return;own(node);node.querySelectorAll(selectors).forEach(enqueue);};
  const all=()=>{baselineCache.clear();rasterCache.clear();collect(document.body);flush();};
  document.fonts.ready.then(()=>alive&&all());document.fonts.addEventListener('loadingdone',all);
  // Mutation callbacks run before the browser paints new controls. A later animation frame visibly moves the text.

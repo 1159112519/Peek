@@ -1,4 +1,4 @@
-param([switch]$WidgetOnly = $true)
+﻿param([switch]$WidgetOnly = $true)
 $ErrorActionPreference='Stop'
 if(-not $WidgetOnly){throw 'This repository builds Peek only.'}
 $previewRoot=$PSScriptRoot
@@ -32,6 +32,11 @@ if($WidgetOnly){
  foreach($id in 1..12){$key='{0:00}' -f $id;$target=New-Item -ItemType Directory -Path (Join-Path $peekOutput $key) -Force;Copy-Item -LiteralPath (Join-Path $previewRoot "host/peek-icons/$key/app.ico") -Destination $target.FullName -Force}
 }
 $argsBuild+=('/win32manifest:'+(Join-Path $previewRoot 'host/AsterHub.manifest'))
+$protocol=Join-Path $previewRoot 'updates/PeekUpdateProtocol.cs'
+$worker=Join-Path $appRoot 'runtime/PeekUpdateWorker.exe'
+& $compiler /nologo /target:winexe /platform:x64 /optimize+ ('/out:'+$worker) $protocol (Join-Path $previewRoot 'updates/PeekUpdateWorker.cs')
+if($LASTEXITCODE -ne 0){throw 'Peek update worker build failed'}
+$argsBuild+=$protocol
 $argsBuild+=@(Get-ChildItem (Join-Path $previewRoot 'host') -Filter *.cs -Recurse | ForEach-Object {$_.FullName})
 $releaseSource=$null
 try {

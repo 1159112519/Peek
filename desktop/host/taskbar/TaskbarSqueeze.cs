@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 
@@ -81,7 +81,7 @@ internal sealed class TaskbarSqueezeLayout {
 }
 internal sealed class TaskbarCellInk {
  internal float Left=float.PositiveInfinity,Right=float.NegativeInfinity;
- internal float NumberX,NumberTrack,UnitX,LabelX;
+ internal float NumberX,NumberTrack,UnitX,LabelX,NameRight;
  internal float[] GraphX;
  internal string Text;
  internal readonly List<RectangleF> HitAreas=new List<RectangleF>(5);

@@ -12,7 +12,7 @@ export function moduleLabel(module,fallback='未知'){
  if(metric==='memory'&&variant==='ram')return 'RAM';if(metric==='storage'&&variant==='ssd')return 'SSD';
  if(metric==='down'||metric==='up')return variant==='chinese'?(metric==='down'?'下载':'上传'):(metric==='down'?'↓':'↑');
  if(variant==='icon')return '◇';if(metric.startsWith('cpu'))return 'CPU';if(['gpu','gpuFrequency','gpuTemperature'].includes(metric))return 'GPU';
- if(variant==='english')return ({memory:'MEM',storage:'Disk',gpuMemory:'VRAM',memoryUsed:'Used',gpuFan:'Fan',gpuPower:'Power',storageRead:'R',storageWrite:'W',ping:'Ping',loss:'Loss',io:'I/O'})[metric]||fallback;
+ if(variant==='english')return ({memory:'MEM',storage:'Disk',gpuMemory:'VRAM',memoryUsed:'Used',gpuFan:'Fan',gpuPower:'PWR',storageRead:'R',storageWrite:'W',ping:'Ping',loss:'Loss',io:'I/O'})[metric]||fallback;
  if(variant==='short')return ({storageRead:'读',storageWrite:'写'})[metric]||fallback;
  if(variant==='chinese')return ({storageRead:'读取',storageWrite:'写入'})[metric]||fallback;return fallback;
 }

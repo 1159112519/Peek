@@ -7,6 +7,22 @@ export function taskbarReadoutLeftShift(id,numberStart,track,previousRight){
  const widest=Math.max(Math.floor((track+.001)/digit)*digit,Math.floor(Math.max(0,track-dot+.001)/digit)*digit+dot,track>=dash?dash:0);
  return Math.min(digit/2,Math.max(0,numberStart+track-Math.min(track,widest)-previousRight-1));
 }
+// Keep the upper group as the anchor; a nearby lower group moves as a unit.
+export function alignDesktopValues(rows){
+ const shifts=rows.map(()=>0),taken=new Set();
+ const valid=row=>row&&[row.left,row.right,row.nameRight].every(Number.isFinite)&&/^(-?[0-9]+(?:\.[0-9]+)?|—)$/.test(row.text);
+ rows.forEach((upper,i)=>{
+  if(taken.has(i)||!valid(upper))return;
+  const missing=upper.text==='—';
+  for(let j=i+1;j<rows.length;j++){
+   const lower=rows[j];if(taken.has(j)||!valid(lower)||missing!==(lower.text==='—'))continue;
+   const delta=upper.right-lower.right;
+   if(Math.abs(delta)>(missing?5:10)||lower.left+delta<lower.nameRight+(lower.nameGap??3))continue;
+   shifts[j]=delta;taken.add(j);
+  }
+ });
+ return shifts;
+}
 const byteRates=['B/s','K/s','M/s','G/s','T/s','P/s','E/s'];
 const bitRates=['b/s','kb/s','Mb/s','Gb/s','Tb/s','Pb/s','Eb/s'];
 export const taskbarUnitFamily=(id,fallback,networkBits=false)=>{
@@ -14,8 +30,8 @@ export const taskbarUnitFamily=(id,fallback,networkBits=false)=>{
  if(['down','up','storageRead','storageWrite'].includes(id))return byteRates;
  if(['cpuFrequency','gpuFrequency'].includes(id))return ['GHz','THz','PHz','EHz'];
  if(id==='gpuPower')return ['W','kW','MW','GW'];
- if(id==='memoryUsed'||id==='memoryFree')return ['GB','TB','PB','EB','GiB','TiB','PiB','EiB'];
- return [fallback];
+ if(id==='memoryUsed'||id==='memoryFree')return ['G','TB','PB','EB','GiB','TiB','PiB','EiB'];
+ return [fallback==='GB'?'G':fallback];
 };
 export const taskbarNumberWidth=text=>[...text].reduce((n,c)=>n+taskbarGlyphWidth(c),0);
 export function taskbarPlaceKey(text,index){const dot=text.includes('.')?text.indexOf('.'):text.length;return index<dot?'i'+(dot-index-1):index===dot?'dot':'f'+(index-dot);}
@@ -33,6 +49,7 @@ export function taskbarDisplay(sample,label,fallbackUnit='',budget,{networkBits=
  else if(index>=0){while(Math.abs(number)>=radix&&index<units.length-1){number/=radix;index++;}unit=units[index];}
  const reportedDecimals=sample?.decimals??0;
  const decimals=(network&&compactNetwork)||Math.abs(number)>=100?0:Math.max(0,Math.min(3,network&&networkScale>=0&&number>0&&number<1?Math.max(2,reportedDecimals):reportedDecimals));if(!stale)text=number.toFixed(decimals);
+ if(unit==='GB')unit='G'; // After scaling; the input telemetry still uses GB.
  const arrow=label==='↑'||label==='↓',single=!arrow&&label.length===1,long=/^[A-Za-z]{4,}$/.test(label),labelEnd=arrow?7:single?13:long?36:24;
  const start=arrow?17:single?17:long?40:31,unitStart=unit?(unit.length<=2&&long?69:unit==='%'?61:60):77,end=unit?unitStart-4:77,preferred=unit?end:73,available=budget?Math.max(0,budget(unit)):end-start;
  if(taskbarNumberWidth(text)>available+.001&&!stale){for(let p=decimals-1;p>=0;p--){const candidate=number.toFixed(p);if(taskbarNumberWidth(candidate)<=available+.001){text=candidate;break;}}

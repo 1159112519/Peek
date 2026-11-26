@@ -11,7 +11,7 @@ import {TaskbarSettings} from './TaskbarSettings';
 import {WidgetTaskbarOptions} from './WidgetTaskbarOptions';
 import {WidgetSampling,WidgetReminders} from './WidgetOptions';
 import {WidgetDesktopSettings} from './WidgetDesktopSettings';
-import {WidgetAbout} from './WidgetAbout';
+import {WidgetAbout,usePeekUpdateStatus} from './WidgetAbout';
 import {PeekIconPicker,peekIconSrc} from './PeekIcons';
 import {native} from './bridge';
 import './widget-settings.css';
@@ -70,6 +70,8 @@ export function WidgetApp({initialSettings,initialError}){
   return ()=>{active=false;clearTimeout(timer);document.removeEventListener('visibilitychange',read);};
  },[page,visible]);
  useEffect(()=>{const favicon=document.querySelector('link[rel=icon]');if(favicon&&saved){favicon.type='image/png';favicon.href=peekIconSrc(saved.iconThemeId);}},[saved?.iconThemeId]);
+ const [updateStatus,setUpdateStatus]=usePeekUpdateStatus();
+ const updateInProgress=updateStatus.state==='downloading'||updateStatus.state==='installing';
  const dirty=Boolean(draft&&saved&&Object.keys(draft).some(key=>draft[key]!==saved[key]));
  const [appearanceMode,setAppearanceMode]=useState(globalThis.__ASTER_WIDGET_MODE??'dark');
  useEffect(()=>native.subscribe(value=>{applyWidgetAppearance(value);setAppearanceMode(value.preference);},'widget-appearance'),[]);
@@ -88,17 +90,17 @@ export function WidgetApp({initialSettings,initialError}){
   });
   return ()=>{live=false;cancelAnimationFrame(raf);};
  },[epoch,Boolean(draft),Boolean(error)]);
- function change(key,value){setDraft(previous=>({...previous,[key]:value}));setDone(false);setError('');}
+ function change(key,value){if(updateInProgress)return;setDraft(previous=>({...previous,[key]:value}));setDone(false);setError('');}
  async function close(){try{await native.request('widget.close')}catch(e){setError(e.message);}}
  async function apply(closeAfter=false){
-  if(!draft||busy)return;
+  if(!draft||busy||updateInProgress)return;
   setBusy(true);setError('');
   try{const next=await native.request('widget.save',{taskbar:draft.taskbar,startup:draft.startup,autoCheckUpdates:draft.autoCheckUpdates,trayVisible:draft.trayVisible,language:draft.language,localIntervalMs:draft.localIntervalMs,monitoring:draft.monitoring,desktop:draft.desktop,iconThemeId:draft.iconThemeId});setLanguage(next.language);setDraft(next);setSaved(next);setDone('已应用');if(closeAfter)await close();}
   catch(e){setError(e.message);}
   finally{setBusy(false);}
  }
  async function repairStartup(){
-  if(!saved||busy)return;
+  if(!saved||busy||updateInProgress)return;
   setBusy(true);setError('');setDone(false);
   try{
    const next=await native.request('widget.startup.repair');
@@ -110,13 +112,21 @@ export function WidgetApp({initialSettings,initialError}){
  async function openData(){try{await native.request('widget.data.open');}catch(e){setError(e.message);}}
  return <main className="widget-settings-window native-preferences" aria-label={t('小组件设置分类')}>
   <ToolNavigation density="compact" label={t('小组件设置分类')} items={settingsTabs} value={page} onChange={setPage} actions={appearanceActions} panels={{
-   taskbar:<WidgetPage name="taskbar" busy={busy}>
+   taskbar:<WidgetPage name="taskbar" busy={busy||updateInProgress}>
     {draft?<TaskbarSettings key={epoch} standalone active={visible&&page==='taskbar'} value={draft.taskbar} savedValue={saved.taskbar} settings={props=><WidgetTaskbarOptions {...props} displays={sources?.displays} openWindows={async()=>{try{await native.request('widget.windows.taskbar')}catch(e){setError(e.message)}}}/>} onChange={value=>change('taskbar',value)}/>:!error&&<p role="status">{t('正在读取设置…')}</p>}
    </WidgetPage>,
-   desktop:<WidgetPage name="desktop" busy={busy}>{draft&&<WidgetDesktopSettings draft={draft} saved={saved?.desktop} change={change} active={visible&&page==='desktop'}/>}</WidgetPage>,
-   sampling:<WidgetPage name="sampling" busy={busy}>{draft&&<WidgetSampling draft={draft} change={change} sources={sources}/>}</WidgetPage>,
-   general:<WidgetPage name="general" busy={busy}>
+   desktop:<WidgetPage name="desktop" busy={busy||updateInProgress}>{draft&&<WidgetDesktopSettings draft={draft} saved={saved?.desktop} change={change} active={visible&&page==='desktop'}/>}</WidgetPage>,
+   sampling:<WidgetPage name="sampling" busy={busy||updateInProgress}>{draft&&<WidgetSampling draft={draft} monitoring={saved?.monitoring} active={visible&&page==='sampling'} change={change} sources={sources}/>}</WidgetPage>,
+   general:<WidgetPage name="general" busy={busy||updateInProgress}>
     {draft&&<div className="widget-general-groups">
+     <section className="widget-settings-group" aria-labelledby="widget-monitoring-heading">
+      <h4 id="widget-monitoring-heading">{t('监测显示')}</h4>
+      <div className="widget-option-list">
+       {[["taskbar","显示任务栏监测"],["desktop","显示桌面监测"]].map(([key,label])=>
+        <label className="widget-option-row" key={key}><span>{t(label)}</span><input type="checkbox" checked={Boolean(draft[key].enabled)} onChange={e=>change(key,{...draft[key],enabled:e.target.checked})}/></label>
+       )}
+      </div>
+     </section>
      <section className="widget-settings-group" aria-labelledby="widget-startup-heading">
       <h4 id="widget-startup-heading">{t('启动')}</h4>
       <div className="widget-option-list">
@@ -143,16 +153,16 @@ export function WidgetApp({initialSettings,initialError}){
      <PeekIconPicker value={draft.iconThemeId} onChange={value=>change('iconThemeId',value)}/>
     </div>}
    </WidgetPage>,
-   about:<WidgetPage name="about" busy={busy}><WidgetAbout info={saved?.appInfo} iconThemeId={saved?.iconThemeId} automatic={draft?.autoCheckUpdates} onAutomaticChange={value=>change('autoCheckUpdates',value)}/></WidgetPage>
+   about:<WidgetPage name="about" busy={busy}><WidgetAbout info={saved?.appInfo} iconThemeId={saved?.iconThemeId} automatic={draft?.autoCheckUpdates} dirty={dirty} status={updateStatus} setStatus={setUpdateStatus} onAutomaticChange={value=>change('autoCheckUpdates',value)}/></WidgetPage>
   }}/>
   <footer className="widget-settings-footer"><div className="widget-settings-footer-inner">
    <div className="widget-settings-feedback">
     {error?<p className="native-error" role="alert">{error}</p>:<span className="native-settings-result" data-dirty={dirty} role="status">{(busy||dirty||done)&&<>{!busy&&!dirty&&done&&<Check size={14} aria-hidden="true"/>}<span className="widget-footer-label">{t(busy?'正在应用…':dirty?'有未应用的更改':done)}</span></>}</span>}
    </div>
    <div className="widget-settings-actions">
-    <Button onClick={close} disabled={busy}>{t('取消')}</Button>
-    <Button onClick={()=>apply()} disabled={busy||!draft}>{t('应用')}</Button>
-    <Button tone="primary" onClick={()=>apply(true)} disabled={busy||!draft}>{t('确定')}</Button>
+    <Button onClick={close} disabled={busy||updateInProgress}>{t('取消')}</Button>
+    <Button onClick={()=>apply()} disabled={busy||!draft||updateInProgress}>{t('应用')}</Button>
+    <Button tone="primary" onClick={()=>apply(true)} disabled={busy||!draft||updateInProgress}>{t('确定')}</Button>
    </div>
   </div></footer>
  </main>;

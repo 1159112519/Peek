@@ -65,8 +65,8 @@ function TypographyRail({part,name,value,onStep,onPreview,onFinish}){useLocale()
 function PageStepIcon({add=false}){useLocale();
  return <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" aria-hidden="true"><path d={add?'M8 3v10M3 8h10':'M3 8h10'}/></svg>;
 }
-function CategoryInk({name,ready,compact}){useLocale();
- const font=compact?categoryFont.replace('13px','12px'):categoryFont;
+function CategoryInk({name,ready}){useLocale();
+ const font=categoryFont;
  const {x,y}=ready?centerTaskbarInk(tr(name),font,28,17):{x:28,y:22};
  return <svg width="56" height="34" viewBox="0 0 56 34" aria-hidden="true"><text x={x} y={y} fill="currentColor" style={{font}}>{tr(name)}</text></svg>;
 }
@@ -199,19 +199,14 @@ export function TaskbarSettings({value,savedValue,reduceMotion=false,onChange,st
  const title=module=>catalogueName(module.metricId);
  function tabTo(mode,focus){setEditorMode(mode);setTuningDraft(null);setColorDraft(null);if(focus)document.getElementById(tabsId+'-'+mode)?.focus();}
  function previewColumns(slide,cellWidth){
-  const footprints=Array.from({length:slide.grid.columns},()=>[]);
-  for(const slot of slide.slots){if(!slot.module)continue;const peer=displayModule(slide.slots.find(x=>x.column===slot.column&&x.row!==slot.row)?.module,slide.grid.columns);
-   const range=taskbarPreviewFootprint(displayModule(slot.module,slide.grid.columns),peer,cellWidth,previewTypography,readoutFormat);if(range)footprints[slot.column]?.push(range);
-  }
-  const ink=footprints.map(items=>items.length?{left:Math.min(...items.map(x=>x.left)),right:Math.max(...items.map(x=>x.right))}:null);
-  const ranges=ink.map(range=>range??{left:0,right:24});
-  const minGap=12,last=ranges.length-1;
-  if(last<1)return [{x:0,opacity:1,blur:0,hidden:false}];
-  const gaps=ranges.slice(1).map((range,i)=>cellWidth+range.left-ranges[i].right);
-  const gap=Math.max(minGap,gaps.reduce((sum,g)=>sum+g,0)/last);
-  const inkWidth=ranges.reduce((sum,range)=>sum+range.right-range.left,0)+last*gap;
-  let edge=ranges[0].left-Math.max(0,inkWidth-(cellWidth*last+ranges[last].right-ranges[0].left))/2;
-  return ranges.map((range,i)=>{const x=edge-range.left-i*cellWidth;edge+=range.right-range.left+gap;return {x,opacity:1,blur:0,hidden:false};});
+  const columns=Array.from({length:slide.grid.columns},()=>[]);
+  for(const slot of slide.slots)if(slot.module)columns[slot.column]?.push(displayModule(slot.module,slide.grid.columns));
+  const ranges=columns.map((modules,i)=>{
+   const items=modules.map((m,j)=>taskbarPreviewFootprint(m,modules.find((_,k)=>j!==k),cellWidth,previewTypography,readoutFormat));
+   return items.length?{left:Math.min(...items.map(x=>x.left)),right:Math.max(...items.map(x=>x.right))}:{left:0,right:24};
+  });
+  let edge=ranges[0].left;
+  return ranges.map((range,i)=>{const x=edge-range.left-i*cellWidth;edge+=range.right-range.left+12;return {x,opacity:1,blur:0,hidden:false};});
  }
  const parts=displayModule(selected.module,page.grid.columns)?.parts??[],typeMetric=typeScope==='metric'?selected.module?.metricId:null;
  const offsets=typeMetric?layout.typography?.metrics?.[typeMetric]:layout.typography?.global;
@@ -234,7 +229,7 @@ export function TaskbarSettings({value,savedValue,reduceMotion=false,onChange,st
  function resetTuning(){setTuningDraft(null);commit({type:'resetTypographyX',from:selected.id,metric:typeMetric});}
  function changeTuning(part,next){if((Number(offsets?.[part])||0)!==next)commit({type:'typography',from:selected.id,metric:typeMetric,part,value:next});}
  finishTuning.current=(part,next,cancel)=>{setTuningDraft(null);if(!cancel)changeTuning(part,next);};
- const categoryNav=label=><nav className="tb42-categories" aria-label={tr(label)} style={{'--tb-cat-index':categoryIndex}}><span className="tb42-category-marker" aria-hidden="true"/>{tr(groups.map(([name],index)=><button type="button" key={name} aria-label={tr(name)} aria-pressed={category===name} onClick={()=>chooseCategory(name,index)}><CategoryInk name={name} ready={fontsReady} compact={standalone}/></button>))}</nav>;
+ const categoryNav=label=><nav className="tb42-categories" aria-label={tr(label)} style={{'--tb-cat-index':categoryIndex}}><span className="tb42-category-marker" aria-hidden="true"/>{tr(groups.map(([name],index)=><button type="button" key={name} aria-label={tr(name)} aria-pressed={category===name} onClick={()=>chooseCategory(name,index)}>{standalone?<span className="control-label">{tr(name)}</span>:<CategoryInk name={name} ready={fontsReady}/>}</button>))}</nav>;
  return <section className="taskbar-settings" data-fonts-ready={fontsReady} data-reduced={reduced} data-color-instant={colorDraft?.instant===true}>
   {!standalone&&<section className="tb43-monitor-options" aria-labelledby={tabsId+'-monitor'}>
    <header className="tb43-monitor-head"><h3>{t("任务栏监测")}</h3><h4 id={tabsId+'-monitor'}>{t("监测与外观")}</h4></header>
@@ -298,7 +293,7 @@ export function TaskbarSettings({value,savedValue,reduceMotion=false,onChange,st
       return <div className="tb42-library-item" key={metric} data-metric={metric} data-located={libraryFocus?.metric===metric} aria-label={tr(metricName)}>
        <div className="tb42-library-names">{tr(nameVariants(metric).map(variant=><button type="button" key={variant} data-variant={variant} draggable title={`${tr(metricName)}: ${tr(variantLabel[variant])}`} aria-label={`${tr(metricName)} ${tr(variantLabel[variant])}`} onDragStart={e=>start(e,source({variant}))} onDragEnd={clearDrag} onClick={()=>insert({variant})}><Readout format={readoutFormat} colors={previewColors} module={{...item,name:{variant},parts:[]}} snapshot={snapshot} literalNames={standalone} catalogueScale={standalone?1.08:1} centerCatalogueName={standalone} mode="name"/></button>))}</div>
        <span className="tb42-palette-divider" aria-hidden="true"/>
-       <div className="tb42-library-parts">{tr(Object.entries(partLabels).map(([part,label])=><button type="button" key={part} data-library-part={part} title={`${tr(metricName)}: ${tr(label)}`} aria-label={`${tr(metricName)} ${tr(label)}`} draggable onDragStart={e=>start(e,source({part}))} onDragEnd={clearDrag} onClick={()=>insert({part})}><Readout format={readoutFormat} colors={previewColors} module={{...item,parts:[part]}} snapshot={snapshot} points={series[metric]} numberMotion={reduced?'direct':numberMotion} chartMotion={!reduced} literalNames={standalone} catalogueScale={standalone?1.06:1} mode="part"/></button>))}</div>
+       <div className="tb42-library-parts">{tr(Object.entries(partLabels).map(([part,label])=><button type="button" key={part} data-library-part={part} title={part==='number'&&snapshot?.values?.[metric]?.reason?t(snapshot.values[metric].reason):`${tr(metricName)}: ${tr(label)}`} aria-label={`${tr(metricName)} ${tr(label)}`} draggable onDragStart={e=>start(e,source({part}))} onDragEnd={clearDrag} onClick={()=>insert({part})}><Readout format={readoutFormat} colors={previewColors} module={{...item,parts:[part]}} snapshot={snapshot} points={series[metric]} numberMotion={reduced?'direct':numberMotion} chartMotion={!reduced} literalNames={standalone} catalogueScale={standalone?1.06:1} mode="part"/></button>))}</div>
       </div>}))}</div></div></div>
     </div>
    </section>

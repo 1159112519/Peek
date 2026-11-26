@@ -5,7 +5,9 @@ using System.Text.RegularExpressions;
 internal sealed class PeekUpdateResult {
  public string state {get;private set;}
  public string version {get;private set;}
- internal PeekUpdateResult(string state,string version=null){this.state=state;this.version=version;}
+ public int progress {get;private set;}
+ public string detail {get;private set;}
+ internal PeekUpdateResult(string state,string version=null,int progress=0,string detail=null){this.state=state;this.version=version;this.progress=progress;this.detail=detail;}
 }
 
 internal static class PeekUpdates {

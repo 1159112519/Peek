@@ -19,7 +19,6 @@ export function WidgetTaskbarOptions({config,readoutFormat,numberMotion,refreshM
  const monitorItems=displays?.map(({id,name,width,height})=>({id,name:name.replace(/^.*DISPLAY/,'Display ')+` · ${width} × ${height}`}));
  return <>
   {group('behavior','显示行为',<>
-   {check('显示监测','enabled',config.enabled)}
    {check('点击打开资源详情','clickDetails',config.clickDetails)}
    {check('自动切页','autoPage',config.autoPage,!canAutoPage)}
    {config.autoPage&&canAutoPage&&select('自动切页间隔','自动切页间隔',taskbarAutoPageIntervals.includes(config.intervalSeconds)?config.intervalSeconds:taskbarAutoPageIntervals[0],options,v=>update({intervalSeconds:Number(v)}))}

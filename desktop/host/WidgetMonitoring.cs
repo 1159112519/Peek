@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -7,10 +7,11 @@ using System.Linq;
 // Preferences are saved by the widget's existing Apply/Cancel transaction.
 public sealed class WidgetMonitoring {
  public string adapter="",disk="",volume="",cpuSource="time";
+ public bool probeGateway;
  public int trafficMiB,memoryPercent,gpuCelsius;
  public WidgetMonitoring Normalize(){return new WidgetMonitoring{
   adapter=Source(adapter),disk=Source(disk),volume=Source(volume),cpuSource=cpuSource=="performance"?"performance":"time",
-  trafficMiB=Bound(trafficMiB,1048576),memoryPercent=Bound(memoryPercent,100),gpuCelsius=Bound(gpuCelsius,120)};}
+  probeGateway=probeGateway,trafficMiB=Bound(trafficMiB,1048576),memoryPercent=Bound(memoryPercent,100),gpuCelsius=Bound(gpuCelsius,120)};}
  static string Source(string value){return value!=null&&value.Length<=256?value:"";}
  static int Bound(int value,int max){return Math.Max(0,Math.Min(max,value));}
 }

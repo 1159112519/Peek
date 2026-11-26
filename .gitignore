@@ -13,3 +13,5 @@ node_modules/
 /desktop/app/resources/locales/
 /desktop/app/resources/peek-icons/
 /desktop/app/resources/workbench/
+
+/desktop/app/runtime/PeekUpdateWorker.exe

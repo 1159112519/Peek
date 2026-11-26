@@ -6,8 +6,22 @@ test('capture bursts do not overlap requests and refresh after the in-flight rea
 test('device switch disposal aborts old reads and removes subscriptions',async()=>{const h=harness();h.stop();assert.equal(h.events.size,0);assert(h.pending[0].signal.aborted);h.pending[0].resolve({snapshot:{device:'old'}});await flush();assert.deepEqual(h.snapshots,[]);assert.equal(h.timers.size,0);});
 test('missing cached telemetry stays unavailable instead of showing made-up readings',async()=>{const h=harness();h.pending[0].reject(Error('unavailable'));await flush();assert.deepEqual(h.snapshots,[null]);h.stop();});
 
-import {taskbarDisplay,taskbarGlyphWidth,taskbarNumberWidth,taskbarReadoutLeftShift,taskbarPlaceKey} from './taskbar-display.js';
+import {alignDesktopValues,taskbarDisplay,taskbarGlyphWidth,taskbarNumberWidth,taskbarReadoutLeftShift,taskbarPlaceKey} from './taskbar-display.js';
 test('preview and native widget bound every metric without clipping a numeric prefix',()=>{for(const label of ['CPU','内存','GPU','R','W','↓','↑'])for(const value of [0,99.99,999.9,9999,-9999,123456789,Number.MAX_VALUE])for(const unit of ['%','K/s','GHz','GB','W','rpm']){const s={value,Text:String(value),unit,decimals:1},before=JSON.stringify(s),d=taskbarDisplay(s,label);assert(d.x>=d.start);assert(d.x+taskbarNumberWidth(d.text)<=d.end+.001);assert.equal(JSON.stringify(s),before);assert(d.unitStart>=d.end);}});
+test('desktop right-aligns nearby value / unit groups to the upper row, without crossing the label',()=>{
+ const at=(text,left,right,nameRight=24)=>({text,left,right,nameRight});
+ assert.deepEqual(alignDesktopValues([at('24',43,64),at('8',59,74)]),[0,-10]);
+ assert.deepEqual(alignDesktopValues([at('79',40,64),at('169',32,67),at('23',41,62)]),[0,-3,2]);
+ assert.deepEqual(alignDesktopValues([at('0',39,50),at('4.0',32,63),at('0',39,50)]),[0,0,0]);
+ assert.deepEqual(alignDesktopValues([at('24',39,58),at('8',37,65,28)]),[0,0]);
+ assert.deepEqual(alignDesktopValues([at('—',47,59),at('—',50,62),at('8',49,60)]),[0,-3,0]);
+ assert.deepEqual(alignDesktopValues([at('24',40,51),at('8',50,58),at('9',54,64)]),[0,-7,0]);
+});
+test('widget abbreviates GB after conversion without changing telemetry or rates',()=>{
+ const memory={value:14.2,unit:'GB',decimals:1};assert.equal(taskbarDisplay(memory,'Used','GB',()=>88,{id:'memoryUsed'}).unit,'G');
+ assert.equal(memory.unit,'GB');assert.equal(taskbarDisplay({...memory,value:1024},'Used','GB',()=>88).unit,'TB');
+ assert.equal(taskbarDisplay({...memory,unit:'G/s'},'↓','K/s',()=>88,{id:'down'}).unit,'G/s');
+});
 test('large transfer readings upgrade units and reduce excess decimals',()=>{const d=taskbarDisplay({value:123456789,unit:'K/s',decimals:1},'R');assert.equal(d.unit,'G/s');assert.equal(d.text,'118');const normal=taskbarDisplay({value:23.6,unit:'M/s',decimals:1},'R');assert.equal(normal.text,'23.6');assert.equal(normal.start,17);assert.equal(normal.unitStart,60);});
 test('unavailable readings stay unavailable and digit keys identify decimal place',()=>{assert.equal(taskbarDisplay(null,'GPU').text,'—');assert.equal(taskbarDisplay({value:0,unit:'%',decimals:0},'GPU').text,'0');assert.equal(taskbarPlaceKey('9.0',0),taskbarPlaceKey('19.0',1));assert.equal(taskbarPlaceKey('9.0',2),taskbarPlaceKey('19.00',3));});
 

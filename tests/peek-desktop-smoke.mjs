@@ -40,7 +40,15 @@ async function run(body){
   await p.locator('.foundation-tool-navigation').getByRole('tab',{name:'桌面',exact:true}).click();
   await p.locator('.peek-desktop-preview').waitFor();await body(p);assert.deepEqual(errors,[]);
  }catch(e){if(errors.length)console.error(errors);if(p&&!p.isClosed())await p.screenshot({path:path.join(evidence,`failure-${port}.png`)}).catch(()=>{});throw e;}
- finally{if(p&&!p.isClosed())await bridge(p,'widget.smoke.quit').catch(()=>{});if(browser?.isConnected())await browser.close().catch(()=>{});for(let i=0;i<30&&child.exitCode===null;i++)await wait(100);if(child.exitCode===null)child.kill();}
+ finally{
+  if(p&&!p.isClosed())await bridge(p,'widget.smoke.quit').catch(()=>{});
+  // Wait for the old host, not just the browser connection. Reusing this data directory before
+  // native disposal releases its single-instance mutex will only activate the old window.
+  for(let i=0;i<160&&child.exitCode===null;i++)await wait(100);
+  if(browser?.isConnected())await browser.close().catch(()=>{});
+  if(child.exitCode===null)child.kill();
+ }
+ assert.equal(child.exitCode,0,'previous smoke host did not shut down cleanly');
  if(errors.length)console.error('WebView errors:',errors);
 }
 async function capture(p,name){await bridge(p,'widget.smoke.desktop.capture');await fs.copyFile(path.join(data,'desktop-widget.png'),path.join(evidence,name+'.png'));}
@@ -74,7 +82,9 @@ await run(async p=>{
  await p.locator('.peek-desktop-slot[data-guide=true]').nth(8).getByRole('button').click();
  await p.getByRole('navigation',{name:'组件分类'}).getByRole('button',{name:'GPU',exact:true}).click();
  await p.getByRole('button',{name:'GPU 温度 数字',exact:true}).click();
+ await p.getByRole('tab',{name:'常规',exact:true}).click();
  await p.getByRole('checkbox',{name:'显示桌面监测',exact:true}).check();
+ await p.getByRole('tab',{name:'桌面',exact:true}).click();
  await p.getByRole('checkbox',{name:'全屏时隐藏',exact:true}).uncheck(); // Tests must show the isolated widget even if the host is fullscreen.
  await p.getByRole('slider',{name:'背景不透明度'}).fill('67');
  await p.locator('.widget-settings-body:visible').evaluate(el=>el.scrollTop=0);
@@ -138,12 +148,13 @@ await run(async p=>{
  await capture(p,'desktop-1x1-restarted');
  assert.equal(await p.getByRole('button',{name:'在桌面调整',exact:true}).count(),0);
  await assert.rejects(bridge(p,'widget.desktop.edit'));
- await drag(p,'.peek-desktop-grip.right',370,120);
+ // Keep the simulated pointer inside the actual WebView while crossing both column thresholds.
+ await drag(p,'.peek-desktop-grip.right',145,0);
  assert.equal(await dimensions(p),'3 × 1');
  await drag(p,'.peek-desktop-grip.bottom',0,120);assert.equal(await dimensions(p),'3 × 3');
  assert.equal((await telemetry(p)).columns,1,'desktop must not resize before settings are applied');
  await apply(p);
- const restored=await telemetry(p);assert.equal(restored.columns,3);assert.equal(restored.rows,3);assert.equal(restored.width,restored.columnStops[2]);assert.equal(restored.height,67);
+ const restored=await telemetry(p);assert.equal(restored.columns,3);assert.equal(restored.rows,3);assert(restored.width>22&&restored.width<=restored.columnStops[2]+2,'desktop shell should fit occupied ink, not reserve a trailing number lane');assert(Math.abs(restored.height-67)<=.5,'shell height should be 67 DIP within DPI rounding');
  await capture(p,'desktop-3x3-restored');
  await p.getByRole('checkbox',{name:'鼠标穿透',exact:true}).check();await apply(p);
  assert.equal((await options(p)).desktop.clickThrough,true);
@@ -167,6 +178,42 @@ await run(async p=>{
   await fs.writeFile(path.join(evidence,'notification-app-id.txt'),id);
   await wait(900);await input('capture',path.join(evidence,'windows-notification.png'));
  }
+});
+// Exercise the display toggles independently from the draft through to the native window.
+await run(async p=>{
+ const tab=name=>p.getByRole('tab',{name,exact:true});
+ await tab('常规').click();
+ const taskbar=p.getByRole('checkbox',{name:'显示任务栏监测',exact:true});
+ const desktop=p.getByRole('checkbox',{name:'显示桌面监测',exact:true});
+ const initial=await options(p);
+ await desktop.check();await apply(p);
+ await p.waitForTimeout(220);assert((await telemetry(p))?.visible,'enabled desktop has no visible native window');
+ const on=await options(p);
+ await taskbar.setChecked(!on.taskbar.enabled);
+ assert.equal(await desktop.isChecked(),true);
+ assert.equal((await options(p)).taskbar.enabled,on.taskbar.enabled,'taskbar changed before applying');
+ await apply(p);assert.equal((await options(p)).taskbar.enabled,!on.taskbar.enabled);
+ assert.equal((await telemetry(p))?.visible,true,'taskbar toggle affected desktop');
+ await desktop.uncheck();assert.equal((await telemetry(p))?.visible,true,'desktop changed before applying');
+ await apply(p);
+ assert.equal(await telemetry(p),null,'disabled desktop still has a native window');
+ const off=await options(p);
+ assert.equal(off.taskbar.enabled,!on.taskbar.enabled);
+ assert.deepEqual(off.desktop.cells,initial.desktop.cells,'toggle cleared assigned desktop slots');
+ assert.deepEqual(off.taskbar.layout.pages,initial.taskbar.layout.pages,'toggle cleared assigned taskbar slots');
+ const saved=JSON.parse(await fs.readFile(path.join(data,'preferences.json'),'utf8'));
+ assert.equal(saved.taskbar.enabled,off.taskbar.enabled);assert.equal(saved.widgetDesktop.enabled,false);
+ for(const name of ['浅色','深色']){
+  await p.getByRole('button',{name,exact:true}).click();await wait(260);
+  await p.screenshot({path:path.join(evidence,`general-${name==='浅色'?'light':'dark'}.png`)});
+ }
+});
+await run(async p=>{
+ await p.getByRole('tab',{name:'常规',exact:true}).click();
+ const saved=JSON.parse(await fs.readFile(path.join(data,'preferences.json'),'utf8'));
+ assert.equal(await p.getByRole('checkbox',{name:'显示任务栏监测',exact:true}).isChecked(),saved.taskbar.enabled);
+ assert.equal(await p.getByRole('checkbox',{name:'显示桌面监测',exact:true}).isChecked(),false);
+ assert.equal(await telemetry(p),null);
 });
 if(controls){const finished=once(controls,'exit');controls.stdin.end();await finished;}
 console.log(JSON.stringify({result:'PASS',evidence,data}));

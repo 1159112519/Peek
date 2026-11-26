@@ -1,8 +1,9 @@
-import React from 'react';
+import React,{useEffect,useState} from 'react';
 import {Button} from '../components';
 import {ThemedSelect} from '../themed-select';
 import {t} from '../i18n/index.js';
 import {formatPeekMiB} from './peek-capacity.mjs';
+import {native} from './bridge';
 
 export function SourceSelect({label,value,items=[],fallback,onChange}){
  return <label className="widget-option-row widget-source-field"><span>{t(label)}</span><ThemedSelect aria-label={t(label)} value={value??''} disabled={!value&&!items.length} onChange={e=>onChange(e.target.value)}>
@@ -11,8 +12,47 @@ export function SourceSelect({label,value,items=[],fallback,onChange}){
   {items.map(item=><option key={item.id} value={item.id}>{item.name}{item.active===false?' · '+t('未连接'):''}</option>)}
  </ThemedSelect></label>;
 }
-const samplingDefaults={adapter:'',disk:'',volume:'',cpuSource:'time'};
-export function WidgetSampling({draft,change,sources}){
+const samplingDefaults={adapter:'',disk:'',volume:'',cpuSource:'time',probeGateway:false};
+function GatewayStatus({config,monitoring,active}){
+ const requested=Boolean(config.probeGateway),enabled=Boolean(monitoring?.probeGateway);
+ const adapter=monitoring?.adapter??'';
+ const pending=requested!==enabled||requested&&(config.adapter??'')!==adapter;
+ const watch=active&&enabled&&!pending;
+ const [result,setResult]=useState(null);
+ useEffect(()=>{
+  setResult(null);
+  if(!watch)return;
+  const controller=new AbortController();let timer;
+  async function refresh(){
+   try{
+    const reading=await native.request('widget.gateway.status',{}, {signal:controller.signal});
+    if(!controller.signal.aborted)setResult({adapter,reading});
+   }catch{
+    if(!controller.signal.aborted)setResult({adapter,reading:{pingReason:'无法读取网关探测状态'}});
+   }finally{if(!controller.signal.aborted)timer=setTimeout(refresh,2000);}
+  }
+  void refresh();
+  return()=>{controller.abort();clearTimeout(timer);};
+ },[watch,adapter]);
+ const reading=watch&&result?.adapter===adapter?result.reading:null;
+ const ping=reading?.ping,loss=reading?.loss;
+ let message,help;
+ if(pending)message=requested?'应用后开始探测':'应用后停止探测';
+ else if(!enabled)message='网关探测未开启';
+ else if(!reading)message='正在等待网关探测';
+ else if(loss==null&&reading.lossReason==='网关尚未响应 ICMP，无法判断丢包率'){
+  message=reading.pingReason;
+  help='网关可能不回 ICMP；暂无丢包率，不代表网络断开。';
+ }else if(ping==null)message=reading.pingReason??'正在等待网关探测';
+ else if(loss==null)message=reading.lossReason??'正在积累丢包样本';
+ else message='网关探测正常';
+ const values=[ping!=null&&`Ping ${ping} ms`,loss!=null&&`Loss ${Number(loss.toFixed(1))}%`].filter(Boolean);
+ return <div id="widget-gateway-status" className="widget-group-note">
+  <span role="status">{t(message)}{help&&` · ${t(help)}`}</span>
+  {values.length>0&&<div>{values.join(' · ')}</div>}
+ </div>;
+}
+export function WidgetSampling({draft,monitoring,active,change,sources}){
  const config=draft.monitoring??samplingDefaults;
  const changeSource=(key,value)=>change('monitoring',{...config,[key]:value});
  return <div className="widget-general-groups">
@@ -25,6 +65,12 @@ export function WidgetSampling({draft,change,sources}){
     <label className="widget-option-row widget-source-field"><span>{t('CPU 利用率来源')}</span><ThemedSelect aria-label={t('CPU 利用率来源')} value={config.cpuSource} onChange={e=>changeSource('cpuSource',e.target.value)}><option value="time">{t('CPU 使用时间')}</option><option value="performance">{t('Windows 性能计数器')}</option></ThemedSelect></label>
    </div>
    <p className="widget-group-note">{t('所选连接或磁盘不可用时，读数显示为 —，不会改用其他来源。')}</p>
+  </section>
+  <section className="widget-settings-group" aria-labelledby="widget-gateway-title">
+   <h4 id="widget-gateway-title">{t('延迟与丢包')}</h4>
+   <label className="widget-option-row"><span>{t('探测默认网关')}</span><input type="checkbox" checked={Boolean(config.probeGateway)} aria-describedby="widget-gateway-status" onChange={e=>changeSource('probeGateway',e.target.checked)}/></label>
+   <GatewayStatus config={config} monitoring={monitoring} active={active}/>
+   <p className="widget-group-note">{t('开启后每 2 秒向本地默认网关发送一次 ICMP 请求，用于计算延迟和最近 20 次的丢包率。不探测公网。')}</p>
   </section>
   <section className="widget-settings-group" aria-labelledby="widget-sampling-title">
    <h4 id="widget-sampling-title">{t('采样频率')}</h4>

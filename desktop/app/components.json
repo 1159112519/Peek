@@ -1,5 +1,5 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.2",
   "architecture": "x64",
   "components": [
     {
@@ -20,7 +20,7 @@
     {
       "name": "Peek Windows host",
       "file": "AsterHubWidgets.exe",
-      "version": "0.1.1"
+      "version": "0.1.2"
     }
   ],
   "stage": "Standalone Windows taskbar monitor; local metrics and preferences"

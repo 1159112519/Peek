@@ -138,20 +138,25 @@ internal sealed class TaskbarModule {
   if(v=="icon")return "◇";
   if(Metric.StartsWith("cpu"))return "CPU";
   if(Metric=="gpu"||Metric=="gpuTemperature"||Metric=="gpuFrequency")return "GPU";
-  if(v=="english"){switch(Metric){case "memory":return "MEM";case "storage":return "Disk";case "gpuMemory":return "VRAM";case "memoryUsed":return "Used";case "gpuFan":return "Fan";case "gpuPower":return "Power";case "ping":return "Ping";case "loss":return "Loss";case "io":return "I/O";}}
+  if(v=="english"){switch(Metric){case "memory":return "MEM";case "storage":return "Disk";case "gpuMemory":return "VRAM";case "memoryUsed":return "Used";case "gpuFan":return "Fan";case "gpuPower":return "PWR";case "ping":return "Ping";case "loss":return "Loss";case "io":return "I/O";}}
   if(v=="short"){if(Metric=="storageRead")return "读";if(Metric=="storageWrite")return "写";}
   if(v=="chinese"){if(Metric=="storageRead")return "读取";if(Metric=="storageWrite")return "写入";}
   return fallback.Length==0?"未知":fallback;
  }
 }
 public sealed class TaskbarValue {
+ public string reason;
  public string id,label,unit;public double? value;public int decimals;public DateTime timeUtc;public bool stale,animate=true;
  public string Text{get{return stale||!value.HasValue||double.IsNaN(value.Value)||double.IsInfinity(value.Value)?"—":value.Value.ToString("F"+(Math.Abs(value.Value)>=100?0:decimals),CultureInfo.InvariantCulture);}}
  // Presentation conversion does not mutate source telemetry or its published value/unit.
  internal static readonly string[] ByteRates={"B/s","K/s","M/s","G/s","T/s","P/s","E/s"};
  internal static readonly string[] BitRates={"b/s","kb/s","Mb/s","Gb/s","Tb/s","Pb/s","Eb/s"};
  internal TaskbarDisplay GetDisplay(bool networkBits=false,bool hidePercent=false){return Format(networkBits,hidePercent,false,false,-1);}
- internal TaskbarDisplay ConfiguredDisplay(TaskbarSettings options){return Format(options.networkBits,options.hidePercent,options.hideNetworkUnit,options.compactNetwork,options.networkScale);}
+ internal TaskbarDisplay ConfiguredDisplay(TaskbarSettings options){
+  var display=Format(options.networkBits,options.hidePercent,options.hideNetworkUnit,options.compactNetwork,options.networkScale);
+  if(display.Unit=="GB")display.Unit="G";
+  return display;
+ }
  TaskbarDisplay Format(bool networkBits,bool hidePercent,bool hideNetworkUnit,bool compactNetwork,int networkScale){
   if(stale||!value.HasValue||double.IsNaN(value.Value)||double.IsInfinity(value.Value))return new TaskbarDisplay{Text="—",Unit="",Value=0,Decimals=0};
   double number=value.Value;string suffix=unit??"";string[] units=null;double radix=1000;

@@ -65,7 +65,7 @@ internal sealed class WidgetDesktopWindow:Window {
  readonly Border surface=new Border{BorderThickness=new Thickness(1)};
  readonly Canvas ink=new Canvas{IsHitTestVisible=false};
  readonly RectangleGeometry mask=new RectangleGeometry(),inkMask=new RectangleGeometry();
- readonly Image[] rowImages=new Image[3];
+ readonly Image[,] cellImages=new Image[3,3];
  WidgetDesktopOptions options;
  TaskbarSettings format;
  TaskbarSnapshot last;
@@ -74,8 +74,11 @@ internal sealed class WidgetDesktopWindow:Window {
  readonly TaskbarHistory history=new TaskbarHistory();
  double paintScale;
  float[] origins;
- double[] columnStops={DesktopGrid.Width(1),DesktopGrid.Width(2),DesktopGrid.Width(3)};
- double[] columnEdges={0,DesktopGrid.CellWidth,2*DesktopGrid.CellWidth,3*DesktopGrid.CellWidth};
+ int[] alphaRow=new int[0];
+ double inkLeft=DesktopGrid.InsetX;
+ readonly float[] atlasCuts=new float[4];
+ readonly double[] columnStops={DesktopGrid.Width(1),DesktopGrid.Width(2),DesktopGrid.Width(3)};
+ readonly double[] columnEdges=new double[4];
  Point? press;
  IntPtr handle;
  bool darkSurface;
@@ -89,8 +92,8 @@ internal sealed class WidgetDesktopWindow:Window {
   UseLayoutRounding=true;SnapsToDevicePixels=true;
   var rootView=new Grid{Background=Brush(1,255,255,255),Clip=mask};
   ink.Clip=inkMask;rootView.Children.Add(surface);rootView.Children.Add(ink);Content=rootView;
-  for(int r=0;r<3;r++){
-   var image=new Image{Stretch=Stretch.None,SnapsToDevicePixels=true};RenderOptions.SetBitmapScalingMode(image,BitmapScalingMode.NearestNeighbor);rowImages[r]=image;
+  for(int r=0;r<3;r++)for(int c=0;c<3;c++){
+   var image=new Image{Stretch=Stretch.None,SnapsToDevicePixels=true};RenderOptions.SetBitmapScalingMode(image,BitmapScalingMode.NearestNeighbor);cellImages[r,c]=image;
    Canvas.SetLeft(image,DesktopGrid.InsetX);Canvas.SetTop(image,DesktopGrid.InsetY+r*DesktopGrid.CellHeight);ink.Children.Add(image);
   }
   LoadPosition();
@@ -134,13 +137,14 @@ internal sealed class WidgetDesktopWindow:Window {
    modules[i/3,i%3]=new TaskbarModule(equivalent,false,false,label);
   }
   origins=null;
-  if(last!=null)EnsureBands();
-  Width=columnStops[next.columns-1];Height=DesktopGrid.Height(next.rows);if(IsVisible){UpdateLayout();Constrain();}
+  Height=DesktopGrid.Height(next.rows);
+  if(last!=null)Paint();else Width=DesktopGrid.Width(next.columns);
+  if(IsVisible){UpdateLayout();Constrain();}
   SetTooltip(null);
  }
  void Shape(double w,double h){
   double radius=Math.Min(DesktopGrid.SurfaceRadius,Math.Min(h/2,w/2));surface.CornerRadius=new CornerRadius(radius);mask.Rect=new Rect(0,0,Math.Max(0,w),Math.Max(0,h));mask.RadiusX=mask.RadiusY=radius;
-  inkMask.Rect=new Rect(DesktopGrid.InsetX,DesktopGrid.InsetY,Math.Max(0,w-2*DesktopGrid.InsetX),Math.Max(0,h-2*DesktopGrid.InsetY));
+  inkMask.Rect=new Rect(inkLeft,DesktopGrid.InsetY,Math.Max(0,w-2*inkLeft),Math.Max(0,h-2*DesktopGrid.InsetY));
  }
  void ApplyHitTesting(){
   if(handle==IntPtr.Zero||options==null)return;long style=GetStyle(handle,-20).ToInt64();
@@ -163,29 +167,62 @@ internal sealed class WidgetDesktopWindow:Window {
   if(painter==null){paintScale=1;painter=new TaskbarPainter(1,38,darkSurface);}
   var slots=new TaskbarModule[9];for(int i=0;i<slots.Length;i++)if(i/3<options.rows)slots[i]=modules[i/3,i%3];
   var layout=painter.MeasureDesktopGrid(last,format,slots,options.showUnits);
-  var frame=layout.Frame(layout.FullWidth+.01f,true);origins=new float[3];
+  // Guard space is only for drawing, never part of the visible gutters. An
+  // integer-pixel crop can then compact whole columns without filtering text.
+  const float guard=TaskbarPainter.DesktopValueGapLimit+3;
+  origins=new float[3];atlasCuts[0]=0;
   for(int c=0;c<3;c++){
-   origins[c]=frame.X[c]-TaskbarSqueezeLayout.Start;
-   columnEdges[c+1]=Math.Ceiling(origins[c]+layout.Right[c]);
-   columnStops[c]=2*DesktopGrid.InsetX+columnEdges[c+1];
+   origins[c]=atlasCuts[c]+guard-layout.Left[c];
+   atlasCuts[c+1]=origins[c]+layout.Right[c]+guard;
   }
-  Width=columnStops[options.columns-1];Height=DesktopGrid.Height(options.rows);
+  Height=DesktopGrid.Height(options.rows);
  }
  void Paint(){
   if(last==null||modules==null)return;
   EnsureBands();
   var visual=PresentationSource.FromVisual(this);double scale=visual==null||visual.CompositionTarget==null?paintScale:visual.CompositionTarget.TransformToDevice.M11;if(scale<=0)scale=1;
   if(painter==null||scale!=paintScale){if(painter!=null)painter.Dispose();paintScale=scale;painter=new TaskbarPainter(1,(int)Math.Round(38*scale),darkSurface);}
-  painter.Resize((int)Math.Ceiling(columnEdges[3]*scale)+1,(int)Math.Round(38*scale));painter.History=history;
-  for(int r=0;r<3;r++){
-   var row=new TaskbarModule[6];for(int c=0;c<3;c++)row[c]=modules[r,c];
-   if(row.All(item=>item==null)){rowImages[r].Source=null;continue;}
-   using(var drawn=painter.RenderDesktopRow(last,format,row,(float)scale,options.showUnits,origins)){
+  var cuts=atlasCuts.Select(v=>(int)Math.Ceiling(v*scale)).ToArray();
+  painter.Resize(cuts[options.columns],(int)Math.Round(38*scale));painter.History=history;
+  var shifts=painter.DesktopValueShifts(last,format,modules,options.rows,options.columns,(float)scale,options.showUnits,origins);
+  var images=new BitmapSource[3];var left=cuts.Skip(1).ToArray();var right=cuts.Take(3).ToArray();
+  for(int r=0;r<options.rows;r++){
+   var row=new TaskbarModule[6];for(int c=0;c<options.columns;c++)row[c]=modules[r,c];
+   if(row.All(item=>item==null))continue;
+   using(var drawn=painter.RenderDesktopRow(last,format,row,(float)scale,options.showUnits,origins,shifts[r])){
     int top=(int)Math.Round(2*scale);
     var rect=new System.Drawing.Rectangle(0,top,drawn.Width,Math.Min(drawn.Height-top,(int)Math.Round(DesktopGrid.CellHeight*scale)));
     var data=drawn.LockBits(rect,System.Drawing.Imaging.ImageLockMode.ReadOnly,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-    try{var image=BitmapSource.Create(rect.Width,rect.Height,96*scale,96*scale,PixelFormats.Pbgra32,null,data.Scan0,data.Stride*rect.Height,data.Stride);image.Freeze();rowImages[r].Source=image;}
-    finally{drawn.UnlockBits(data);}
+    try{
+     MeasureInk(data.Scan0,data.Stride,rect.Width,rect.Height,cuts,left,right);
+     var image=BitmapSource.Create(rect.Width,rect.Height,96*scale,96*scale,PixelFormats.Pbgra32,null,data.Scan0,data.Stride*rect.Height,data.Stride);image.Freeze();images[r]=image;
+    }finally{drawn.UnlockBits(data);}
+   }
+  }
+  int margin=(int)Math.Round(DesktopGrid.InsetX*scale),gap=(int)Math.Round(TaskbarSqueezeLayout.MaxGap*scale),x=margin;
+  inkLeft=margin/scale;columnEdges[0]=0;
+  for(int c=0;c<3;c++){
+   bool visible=c<options.columns,hasInk=visible&&right[c]>left[c];
+   int span=hasInk?right[c]-left[c]:(int)Math.Round(48*scale);
+   for(int r=0;r<3;r++){
+    var image=cellImages[r,c];
+    if(hasInk&&images[r]!=null&&modules[r,c]!=null){
+     var section=new CroppedBitmap(images[r],new Int32Rect(left[c],0,span,images[r].PixelHeight));section.Freeze();image.Source=section;
+     Canvas.SetLeft(image,x/scale);
+    }else image.Source=null;
+   }
+   if(visible){x+=span;columnStops[c]=(x+margin)/scale;columnEdges[c+1]=(x-margin+gap*.5)/scale;if(c+1<options.columns)x+=gap;}
+  }
+  double width=(x+margin)/scale;
+  if(Width!=width){Width=width;if(IsVisible){UpdateLayout();Constrain();}}
+ }
+ void MeasureInk(IntPtr scan,int stride,int width,int height,int[] cuts,int[] left,int[] right){
+  if(alphaRow.Length<width)alphaRow=new int[width];
+  for(int y=0;y<height;y++){
+   Marshal.Copy(IntPtr.Add(scan,y*stride),alphaRow,0,width);
+   for(int c=0;c<options.columns;c++){
+    for(int x=cuts[c];x<left[c];x++)if((uint)alphaRow[x]>>24>=16){left[c]=x;break;}
+    for(int x=cuts[c+1]-1;x>=right[c];x--)if((uint)alphaRow[x]>>24>=16){right[c]=x+1;break;}
    }
   }
  }
@@ -209,7 +246,7 @@ internal sealed class WidgetDesktopWindow:Window {
   var p=e.GetPosition(this);
   if(options!=null&&options.showTooltips&&modules!=null&&e.LeftButton==MouseButtonState.Released){
    int r=(int)Math.Floor((p.Y-DesktopGrid.InsetY)/DesktopGrid.CellHeight),c=-1;
-   double xx=p.X-DesktopGrid.InsetX;for(int i=0;i<3;i++)if(xx>=columnEdges[i]&&xx<columnEdges[i+1]){c=i;break;}
+   double xx=p.X-inkLeft;for(int i=0;i<options.columns;i++)if(xx>=columnEdges[i]&&xx<columnEdges[i+1]){c=i;break;}
    var item=r>=0&&r<options.rows&&c>=0&&c<options.columns?modules[r,c]:null;SetTooltip(item);
   }
   if(!press.HasValue||e.LeftButton!=MouseButtonState.Pressed)return;
