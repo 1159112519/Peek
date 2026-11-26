@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -20,10 +20,10 @@ internal sealed class TaskbarController:IDisposable {
  void Run(){var context=TaskbarLocator.SetThreadDpiAwarenessContext((IntPtr)(-4));try{using(var host=new TaskbarLoop(this))Application.Run(host);}catch(Exception ex){DiagnosticsLog.Write("taskbar-loop",ex);state="unavailable";reason=ex.Message;}finally{if(context!=IntPtr.Zero)TaskbarLocator.SetThreadDpiAwarenessContext(context);}}
  public void Dispose(){stop=true;if(Thread.CurrentThread!=thread)thread.Join(1500);}
  sealed class TaskbarLoop:ApplicationContext {
-  readonly TaskbarController owner;readonly Timer watch=new Timer{Interval=160};readonly Stopwatch clock=Stopwatch.StartNew();readonly object probeGate=new object();TaskbarLocator.Layout pending,last;TaskbarSurface surface;volatile bool probing,disposed;long nextProbe,nextRead,nextDisplay,nextFlip;TaskbarSettings applied;int page=-1,probeGeneration,pendingGeneration;TaskbarLayoutEvents layoutEvents;long layoutBurstUntil;readonly TaskbarRoomStability roomStability=new TaskbarRoomStability();
+  readonly TaskbarController owner;readonly Timer watch=new Timer{Interval=160};readonly Stopwatch clock=Stopwatch.StartNew();readonly object probeGate=new object();TaskbarLocator.Layout pending,last;TaskbarSurface surface;volatile bool probing,disposed;long nextProbe,nextRead,nextDisplay,nextFlip;TaskbarSettings applied;int page=-1,probeGeneration,pendingGeneration;TaskbarLayoutEvents layoutEvents;long layoutBurstUntil;readonly TaskbarRoomStability roomStability=new TaskbarRoomStability();readonly TaskbarProbeHold probeHold=new TaskbarProbeHold();
   internal TaskbarLoop(TaskbarController owner){this.owner=owner;layoutEvents=new TaskbarLayoutEvents();watch.Tick+=(s,e)=>Tick();watch.Start();}
   void Flip(int delta,TaskbarSettings options){int count=options.PageCount;if(count<2)return;page=(page+delta%count+count)%count;string active=options.PageId(page);owner.visiblePage=page;if(surface!=null)surface.SetPage(page);if(owner.pageChanged!=null)owner.pageChanged(active,options.Revision);nextFlip=clock.ElapsedMilliseconds+options.intervalSeconds*1000L;}
-  void Drop(){if(surface!=null){surface.Dispose();surface=null;}last=null;roomStability.Reset();}
+  void Drop(){if(surface!=null){surface.Dispose();surface=null;}last=null;roomStability.Reset();probeHold.Reset();}
   void Tick(){
    if(owner.stop){watch.Stop();Drop();ExitThread();return;}
    TaskbarSettings options;lock(owner.gate)options=owner.options;
@@ -34,7 +34,10 @@ internal sealed class TaskbarController:IDisposable {
    if(surface!=null&&(!TaskbarSurface.IsWindow(surface.Handle)||TaskbarLocator.Target(options.monitor)!=last.Parent||!TaskbarLocator.IsWindowVisible(last.Parent)||!surface.IsAttachedTo(last.Parent)))Drop();
    TaskbarLocator.Layout proof;lock(probeGate){proof=pendingGeneration==probeGeneration?pending:null;pending=null;}
    if(proof!=null){
+    bool sameShell=surface!=null&&last!=null&&proof.Parent==last.Parent&&proof.Shell.Equals(last.Shell);
+    bool hold=probeHold.Keep(tickNow,sameShell,proof.MenuOpen,proof.TemporaryEvidence);
     if(proof.Valid&&owner.occupied!=null&&owner.occupied(proof.Parent)){Drop();owner.state="occupied";owner.reason="任务栏监测区域已被其他程序占用。";}
+    else if(hold){nextProbe=Math.Min(nextProbe,tickNow+96);}
     else if(!proof.Valid&&proof.Reason.StartsWith("discovery:")&&surface!=null){owner.reason="任务栏布局探测稍后重试";}
      else if(!proof.Valid){Drop();owner.state="waiting";owner.reason=proof.Reason.StartsWith("no verified")?"任务栏左侧空间不足；调整系统任务栏布局后会自动重试":"任务栏暂不可用；恢复后会自动连接";}
     else if(proof.Parent==TaskbarLocator.Target(options.monitor)){

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
 internal static class TaskbarLocator {
@@ -21,7 +21,20 @@ internal static class TaskbarLocator {
  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpi);
  [DllImport("user32.dll")] public static extern IntPtr GetWindowDpiAwarenessContext(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
- public sealed class Layout {public IntPtr Parent;public int X,Y,W,H;public float Scale;public int Available;public string Reason;public R Shell;public int Safe;public bool Valid{get{return Reason==null;}}}
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window,IntPtr process);
+ [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread,ref GuiThreadInfo info);
+ [StructLayout(LayoutKind.Sequential)] struct GuiThreadInfo {
+  public uint Size,Flags;
+  public IntPtr Active,Focus,Capture,MenuOwner,MoveSize,Caret;
+  public R CaretBounds;
+ }
+ static bool ShellMenuOpen(IntPtr taskbar){
+  const uint menuFlags=0x04|0x08|0x10;
+  uint thread=GetWindowThreadProcessId(taskbar,IntPtr.Zero);if(thread==0)return false;
+  var info=new GuiThreadInfo{Size=(uint)Marshal.SizeOf(typeof(GuiThreadInfo))};
+  return GetGUIThreadInfo(thread,ref info)&&(info.Flags&menuFlags)!=0;
+ }
+ public sealed class Layout {public IntPtr Parent;public int X,Y,W,H;public float Scale;public int Available;public bool TemporaryEvidence,MenuOpen;public string Reason;public R Shell;public int Safe;public bool Valid{get{return Reason==null;}}}
  public static Layout Read(bool verbose,int slots=4){
   var prior=SetThreadDpiAwarenessContext((IntPtr)(-4));try{return ReadPhysical(verbose,TaskbarSettings.LogicalWidth(slots));}finally{if(prior!=IntPtr.Zero)SetThreadDpiAwarenessContext(prior);}
  }
@@ -32,18 +45,20 @@ internal static class TaskbarLocator {
   var h=Target(monitor); R r=new R(); var o=new Layout();o.Parent=h;
   if(h==IntPtr.Zero||!GetWindowRect(h,out r)||!IsWindowVisible(h)||r.W<500||r.H<25||r.H>130){o.Shell=r;o.Reason="unsupported, hidden or missing taskbar: hwnd="+h+" visible="+IsWindowVisible(h);return o;}o.Shell=r;
   var dpi=Math.Max(GetDpiForWindow(h),96u);var scale=dpi/96.0;int hh=(int)Math.Round(38*scale), inset=(int)Math.Round(8*scale);
+  if(ShellMenuOpen(h)){o.MenuOpen=true;o.Reason="Explorer menu active";return o;}
   // Cache the properties in the same UIA query; don't make a cross-process call per button.
   var root=AutomationElement.FromHandle(h);var request=new CacheRequest{AutomationElementMode=AutomationElementMode.None};
   foreach(var property in new[]{AutomationElement.BoundingRectangleProperty,AutomationElement.IsOffscreenProperty,AutomationElement.AutomationIdProperty,AutomationElement.NameProperty})request.Add(property);
   AutomationElementCollection all;
   using(request.Activate())all=root.FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Button));
+  if(ShellMenuOpen(h)){o.MenuOpen=true;o.Reason="Explorer menu active";return o;}
   int safe=int.MaxValue; bool start=false;
   foreach(AutomationElement e in all){var c=e.Cached;var b=c.BoundingRectangle;if(verbose)Console.WriteLine(c.AutomationId+" | "+c.Name+" | "+b+" | offscreen="+c.IsOffscreen);if(c.IsOffscreen||b.IsEmpty||b.Width<8||b.Width>r.W*.8||b.Right<=r.L||b.Left>=r.Rt||b.Bottom<=r.T||b.Top>=r.B)continue;
    if(c.AutomationId=="StartButton"||c.AutomationId=="Start"||c.Name=="Start"||c.Name=="开始")start=true;
    safe=Math.Min(safe,(int)Math.Floor(b.Left));
   }
   o.Safe=safe;
-  if(!start||safe==int.MaxValue){o.Reason="no verified free space before first taskbar control (start="+start+", boundary="+safe+")";return o;}
+  if(!start||safe==int.MaxValue){o.TemporaryEvidence=true;o.Reason="no verified free space before first taskbar control (start="+start+", boundary="+safe+")";return o;}
   o.Scale=(float)scale;o.Available=Math.Max(0,safe-r.L-2*inset);
   o.X=inset;o.Y=Math.Max(0,(r.H-hh)/2);o.W=Math.Min(o.Available,(int)Math.Ceiling(desired*scale));o.H=Math.Min(hh,r.H);return o;
  }

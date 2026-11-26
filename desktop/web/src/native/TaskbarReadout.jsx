@@ -6,7 +6,7 @@ import {taskbarScrollValues,taskbarScrollPath} from './taskbar-scroll';
 import {numberFrames} from '../number-motion';
 import {moduleLabel} from './taskbar-composer';
 import {taskbarMetrics} from './taskbar-layout';
-import {taskbarDisplay,taskbarUnitFamily,taskbarGlyphWidth,taskbarNumberWidth,taskbarReadoutLeftShift,taskbarPlaceKey} from './taskbar-display';
+import {taskbarDisplay,taskbarUnitFamily,taskbarGlyphWidth,taskbarNumberWidth,taskbarPlaceKey} from './taskbar-display';
 const details=Object.fromEntries(taskbarMetrics.map(row=>[row[0],row]));
 import {centerTaskbarInk,measureTaskbarInk,taskbarInkY} from './taskbar-ink';
 const ease='cubic-bezier(.22,.74,.28,1)';
@@ -15,7 +15,7 @@ export const taskbarUnitFont='400 10.5px "Taskbar Inter",sans-serif';
 export const taskbarDigitFont='500 12.5px "Taskbar Inter",sans-serif';
 const labelFont=taskbarLabelFont,unitFont=taskbarUnitFont,numberFont=taskbarDigitFont;
 // Shared 88 x 17 cell: installed slots, library and stage render the same component.
-function Digit({value,x,y,numberMotion,phase}){useLocale();
+function Digit({value,x,center,numberMotion,phase}){useLocale();
  const next=useRef(null),old=useRef(null),previous=useRef(value),history=useRef({value,prior:value});
  if(history.current.value!==value)history.current={value,prior:history.current.value};const prior=history.current.prior;
  useLayoutEffect(()=>{const before=previous.current;previous.current=value;if(before===value||numberMotion==='direct')return;
@@ -24,7 +24,8 @@ function Digit({value,x,y,numberMotion,phase}){useLocale();
   const outgoing=old.current.animate(numberFrames(numberMotion,false,14),options);
   return()=>{incoming.cancel();outgoing.cancel()};
  },[value,numberMotion]);
- return <g data-digit={value}><text ref={old} x={x} y={taskbarInkY(prior,numberFont,y,{x:phase.x+x,y:phase.y})} opacity="0" aria-hidden="true">{tr(prior)}</text><text ref={next} x={x} y={taskbarInkY(value,numberFont,y,{x:phase.x+x,y:phase.y})}>{tr(value)}</text></g>;
+ const y=glyph=>glyph==='—'||glyph==='…'?centerTaskbarInk(glyph,numberFont,0,center).y:taskbarInkY(glyph,numberFont,center+4.5,{x:phase.x+x,y:phase.y});
+ return <g data-digit={value}><text ref={old} x={x} y={y(prior)} opacity="0" aria-hidden="true">{tr(prior)}</text><text ref={next} x={x} y={y(value)}>{tr(value)}</text></g>;
 }
 function Chart({kind,id,sample,points,cores,x,y,motion}){useLocale();
  const path=useRef(null),frame=useRef(0),last=useRef(0),scale=useRef(null),trackKey=useRef(null),lineClip=useId().replaceAll(':',''),lineMask=lineClip+'-fade';
@@ -52,57 +53,46 @@ const metricIcon={cpu:Cpu,cpuFrequency:Activity,cpuTemperature:Thermometer,gpu:M
 // Reserve against the widest supported value and unit. Offsets can close a gap,
 // but not bring the ink of neighboring parts into contact.
 const nameFor=(id,module)=>module?moduleLabel(module,details[id]?.[2]||'未知'):details[id]?.[2]||'—';
-function readoutLayout(id,module,peer,width,mode,typography,format){
- const row=details[id],label=nameFor(id,module);
- const parts=module?.parts??['number'],numeric=parts.includes('number'),partOnly=mode==='part';
+function readoutLayout(id,module,mode,typography,format,labelOverride,hideUnit){
+ const row=details[id],label=labelOverride||nameFor(id,module);
+ const parts=module?.parts??['number'],partOnly=mode==='part';
  const adjust=part=>{if(mode)return 0;const limit=part.endsWith('X')?6:2;return Math.max(-limit,Math.min(limit,(Number(typography?.global?.[part])||0)+(Number(typography?.metrics?.[id]?.[part])||0)))||0;};
- const labelInk=measureTaskbarInk(label,labelFont),labelWidth=label==='◇'?10.5:labelInk.width;
- const paired=!mode&&parts.length===1&&numeric&&peer?.parts.length===1&&peer.parts[0]==='number'&&(
-  (id==='up'&&peer.metricId==='down')||(id==='down'&&peer.metricId==='up')||
-  (id==='storageRead'&&peer.metricId==='storageWrite')||(id==='storageWrite'&&peer.metricId==='storageRead')||
-  (id==='cpuFrequency'&&peer.metricId==='gpuFrequency')||(id==='gpuFrequency'&&peer.metricId==='cpuFrequency'));
- const peerRow=paired?details[peer.metricId]:null,peerLabel=paired?nameFor(peer.metricId,peer):'';
+ const labelInk=measureTaskbarInk(label,labelFont),labelWidth=label==='◇'?10.5:['↑','↓'].includes(label)?7:labelInk.width;
  const network=id==='up'||id==='down';
- const gap=8,graphWidth=24,unitGap=4,minGap=4;
- const nudge=!mode&&!network?taskbarGlyphWidth('0'):0;
- const nameSpace=(name,w)=>w+(['↑','↓'].includes(name)?10:Math.max(7,parts[0]==='number'?nudge+minGap:0));
- const peerSpace=paired?nameSpace(peerLabel,peerLabel==='◇'?10.5:measureTaskbarInk(peerLabel,labelFont).width):0;
- const first=partOnly||!parts.length?0:Math.max(nameSpace(label,labelWidth),peerSpace);
  const unitId=id==='memory'&&format?.memoryMode==='used'?'memoryUsed':id==='memory'&&format?.memoryMode==='free'?'memoryFree':id;
- const reservedUnit=Math.max(0,...taskbarUnitFamily(unitId,row?.[3]||'',format?.networkBits).map(u=>measureTaskbarInk(u,unitFont).width),...(paired?taskbarUnitFamily(peer.metricId,peerRow[3],format?.networkBits).map(u=>measureTaskbarInk(u,unitFont).width):[]));
- const other=parts.filter(part=>part!=='number').length*graphWidth+Math.max(0,parts.length-1)*gap;
- const fixedTrack=Math.max(0,Math.min(taskbarNumberWidth('88.8'),(partOnly?72:width)-first+nudge-other-reservedUnit-unitGap-2));
+ const units=taskbarUnitFamily(unitId,row?.[3]||'',format?.networkBits);
+ const reservedUnit=hideUnit||format?.hideNetworkUnit&&network||format?.hidePercent&&units.every(u=>u==='%')?0:Math.max(0,...units.map(u=>measureTaskbarInk(u,unitFont).width));
+ const fixedTrack=taskbarGlyphWidth('0')*(network?4:3.6);
  function place(numberWidth,unitWidth){
-  const numberTrack=partOnly?numberWidth:fixedTrack;
   const labelStart=adjust('labelX');
-  let edge=partOnly?0:labelStart+labelWidth+minGap,nominal=first;
+  let edge=partOnly?0:labelStart+labelWidth;
   const tracks=parts.map(part=>{
+   const gap=partOnly?0:Math.max(4,6+adjust(part==='number'?'numberX':'graphX'));
+   const x=edge+gap;
    if(part!=='number'){
-    const x=Math.max(edge,nominal+adjust('graphX'));edge=x+graphWidth+minGap;nominal+=graphWidth+gap;return {part,x,w:graphWidth};
+    const w=part==='bars'&&['gpu','memory','gpuMemory'].includes(id)?14:23;
+    edge=x+w;return {part,x,w};
    }
-   const x=Math.max(edge,nominal-nudge+adjust('numberX'));
-   const numberEnd=x+numberTrack;
-   const unitLeft=Math.max(numberEnd+3,nominal-nudge+numberTrack+unitGap+adjust('unitX'));
-   const w=(partOnly?unitWidth:reservedUnit)>0?unitLeft-x+(partOnly?unitWidth:reservedUnit):numberTrack;
-   const shift=mode?0:taskbarReadoutLeftShift(id,x,numberTrack,edge-minGap);
-   edge=x+w+minGap;nominal+=numberTrack+unitGap+reservedUnit+gap-nudge;
-   return {part,x:x-shift,w,start:numberEnd-numberWidth-shift,unitLeft:unitLeft-shift};
+   const unitGap=Math.max(2,3+adjust('unitX'));
+   const unitLeft=x+numberWidth+unitGap;
+   const w=partOnly?numberWidth+(unitWidth?unitGap+unitWidth:0):fixedTrack+(reservedUnit?unitGap+reservedUnit:0);
+   edge=x+w;return {part,x,w,start:x,unitLeft};
   });
-  return {tracks,left:partOnly?0:labelStart,right:Math.max(partOnly?0:labelStart+labelWidth,...tracks.map(t=>t.x+t.w))};
+  return {tracks,left:partOnly?0:labelStart,right:edge};
  }
  return {row,label,labelInk,labelWidth,fixedTrack,adjust,place};
 }
-export function taskbarPreviewFootprint(module,peer,width,typography,format){
- const d=readoutLayout(module.metricId,module,peer,width,undefined,typography,format);
+export function taskbarPreviewFootprint(module,peer,width,typography,format,labelOverride,hideUnit){
+ const d=readoutLayout(module.metricId,module,undefined,typography,format,labelOverride,hideUnit);
  return d.place(d.fixedTrack,0);
 }
-export function Readout({id,module,peer,snapshot,numberMotion='direct',chartMotion=true,points,width=88,typography,mode,colors,format,catalogueScale=1,literalNames=false,centerCatalogueName=false}){useLocale();
+export function Readout({id,module,peer,snapshot,numberMotion='direct',chartMotion=true,points,width=88,typography,mode,colors,format,catalogueScale=1,literalNames=false,centerCatalogueName=false,labelOverride,hideUnit=false}){useLocale();
  const root=useRef(null),[phase,setPhase]=useState({x:0,y:0});
  useLayoutEffect(()=>{let frame;const measure=()=>{const r=root.current?.getBoundingClientRect();if(!r)return;const d=globalThis.devicePixelRatio||1,next={x:((r.x*d)%1)/d,y:((r.y*d)%1)/d};setPhase(old=>Math.abs(old.x-next.x)+Math.abs(old.y-next.y)<.0001?old:next)};const queue=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(measure)};measure();window.addEventListener('resize',queue);document.addEventListener('scroll',queue,true);document.fonts.addEventListener('loadingdone',queue);document.addEventListener('animationend',queue,true);document.addEventListener('transitionend',queue,true);return()=>{cancelAnimationFrame(frame);window.removeEventListener('resize',queue);document.removeEventListener('scroll',queue,true);document.fonts.removeEventListener('loadingdone',queue);document.removeEventListener('animationend',queue,true);document.removeEventListener('transitionend',queue,true)}},[]);
- id=module?.metricId??id;const row=details[id],sample=snapshot?.values?.[id],clip=useId().replace(/[^a-zA-Z0-9_-]/g,''),label=nameFor(id,module);
+ id=module?.metricId??id;const row=details[id],sample=snapshot?.values?.[id],clip=useId().replace(/[^a-zA-Z0-9_-]/g,''),label=labelOverride||nameFor(id,module);
  const Icon=label==='◇'?(metricIcon[id]??Activity):null;
  const parts=module?.parts??['number'],numeric=parts.includes('number'),nameOnly=mode==='name',partOnly=mode==='part';
- const {labelInk,labelWidth,fixedTrack,adjust,place}=readoutLayout(id,module,peer,width,mode,typography,format);
+ const {labelInk,labelWidth,fixedTrack,adjust,place}=readoutLayout(id,module,mode,typography,format,labelOverride,hideUnit);
  const displaySample=id==='memory'&&format?.memoryMode==='used'?snapshot?.values?.memoryUsed:id==='memory'&&format?.memoryMode==='free'?snapshot?.values?.memoryFree:sample;
  const {text,unit}=taskbarDisplay(displaySample,label,row?.[3]||'',()=>fixedTrack,{...format,id,networkBits:format?.networkBits&&(id==='up'||id==='down')});
  const unitInk=measureTaskbarInk(unit,unitFont),numberWidth=taskbarNumberWidth(text);
@@ -124,10 +114,10 @@ export function Readout({id,module,peer,snapshot,numberMotion='direct',chartMoti
  let cursor=start;
  return <svg ref={root} className="taskbar-mini-cell" data-custom-name={Boolean(colors?.[id]?.label)} viewBox={`0 0 ${visibleWidth} 17`} width={visibleWidth*catalogueScale} height={17*catalogueScale} style={{...metricCss(colors,id),width:visibleWidth*catalogueScale,minWidth:visibleWidth*catalogueScale,overflow:mode?undefined:'visible'}} role="img" aria-label={`${tr(row?.[1]||id||'空位置')} ${text} ${unit}`}>
   <defs><clipPath id={clip}><rect x={start-1} y=".5" width={numberWidth+2} height="16"/></clipPath></defs>
-  {tr(!partOnly&&(Icon?<Icon x={nameOnly?(visibleWidth-10.5)/2:adjust('labelX')} y={nameOnly?3:3+adjust('label')} width={10.5} height={10.5} className="taskbar-metric-icon" strokeWidth={1.8}/>:<text className="taskbar-cell-label" x={labelX} y={centerCatalogueName&&namePosition?namePosition.y:taskbarInkY(label,labelFont,13.5+adjust('label'),{x:phase.x+labelX,y:phase.y})}>{renderedLabel}</text>))}
-  {tr(tracks.map(({part,x})=>part==='number'?null:<Chart key={part} kind={part} id={id} sample={sample} cores={snapshot?.cpuCores} points={points} x={x+.75} y={10+adjust('graph')} motion={chartMotion}/>))}
-  {tr(numeric&&<><g className="taskbar-cell-number" clipPath={`url(#${clip})`}>{tr([...text].map((c,i)=>{const gx=cursor;cursor+=taskbarGlyphWidth(c);return <Digit key={taskbarPlaceKey(text,i)} value={c} x={gx} y={13.5+adjust('number')} phase={phase} numberMotion={sample?.animate===false?'direct':numberMotion}/>}))}</g>
-  <text className="taskbar-cell-unit" x={unitStart} y={taskbarInkY(unit.replace('/',''),unitFont,13.5+adjust('unit'),{x:phase.x+unitStart,y:phase.y})}>{tr(unit)}</text></>)}
+  {tr(!partOnly&&(Icon?<Icon x={nameOnly?(visibleWidth-10.5)/2:adjust('labelX')} y={nameOnly?3:3+adjust('label')} width={10.5} height={10.5} className="taskbar-metric-icon" strokeWidth={1.8}/>:<text className="taskbar-cell-label" x={labelX} y={centerCatalogueName&&namePosition?namePosition.y:centerTaskbarInk(renderedLabel,labelFont,0,8.5+adjust('label')).y}>{renderedLabel}</text>))}
+  {tr(tracks.map(({part,x})=>part==='number'?null:<Chart key={part} kind={part} id={id} sample={sample} cores={snapshot?.cpuCores} points={points} x={x} y={10+adjust('graph')} motion={chartMotion}/>))}
+  {tr(numeric&&<><g className="taskbar-cell-number" clipPath={`url(#${clip})`}>{tr([...text].map((c,i)=>{const gx=cursor;cursor+=taskbarGlyphWidth(c);return <Digit key={taskbarPlaceKey(text,i)} value={c} x={gx} center={8.5+adjust('number')} phase={phase} numberMotion={sample?.animate===false?'direct':numberMotion}/>}))}</g>
+  {!hideUnit&&<text className="taskbar-cell-unit" x={unitStart} y={centerTaskbarInk(unit,unitFont,0,8.5+adjust('unit')).y}>{tr(unit)}</text>}</>)}
 
  </svg>;
 }

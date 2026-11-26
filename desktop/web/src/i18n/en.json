@@ -1757,5 +1757,12 @@
   "玫夜": "Rose night",
   "石墨": "Graphite",
   "极光": "Aurora",
-  "应用后更换窗口与通知区图标，不随深浅色切换。": "Apply to change the window and tray icons. Light and dark mode do not change them."
+  "应用后更换窗口与通知区图标，不随深浅色切换。": "Apply to change the window and tray icons. Light and dark mode do not change them.",
+  "桌面组件": "Desktop widget",
+  "拖动调整列数": "Drag to resize columns",
+  "拖动调整行数": "Drag to resize rows",
+  "拖动调整行和列": "Drag to resize rows and columns",
+  "显示文字": "Display label",
+  "默认名称": "Default label",
+  "背景不透明度": "Background opacity"
 }

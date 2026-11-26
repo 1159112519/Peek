@@ -146,6 +146,7 @@ internal sealed class WidgetRuntime:IDisposable {
   if(WidgetHost.TestMode&&!WorkbenchHost.SmokeTaskbar){options=options.Normalize();options.enabled=false;}
   taskbar=new TaskbarController(options,Snapshot,()=>Dispatch(ShowSettings),()=>Dispatch(ShowSettings),()=>Dispatch(()=>ShowMenu(true)),(page,revision)=>Dispatch(()=>SelectPage(page,revision)),null,Occupied);
   trayIcon=BrandIcons.Tray(preferences.iconThemeId);
+  BrandShortcuts.RegisterPeekSender(preferences.iconThemeId);
   tray=new System.Windows.Forms.NotifyIcon{Icon=trayIcon,Text="Peek",Visible=preferences.widgetTrayVisible};
   alertTimer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(1)};alertTimer.Tick+=(s,e)=>RefreshBackground();alertTimer.Start();
   ConfigureDesktop();
@@ -193,12 +194,16 @@ internal sealed class WidgetRuntime:IDisposable {
  }
  internal void SmokeSystemAppearance(){if(!WidgetHost.TestMode)throw new InvalidOperationException("Unsupported command");OnSystemPreferenceChanged(null,null);}
  void WarmMenu(){try{menu=NativeCompactMenu.Prepare();}catch(Exception e){DiagnosticsLog.Write("widget-menu-warmup",e);}}
- void ShowMenu(bool fromTaskbar){
+ void ShowMenu(bool fromTaskbar,bool fromDesktop=false){
   if(menu==null)WarmMenu();if(menu==null)return;
-  var items=new List<NativeCompactMenu.Entry>{new NativeCompactMenu.Entry("\uE713","Peek 设置",ShowSettings)};
-  if(fromTaskbar&&preferences.taskbar.PageCount>1){items.Add(new NativeCompactMenu.Entry("\uE76B","上一页",()=>taskbar.FlipPage(-1)));items.Add(new NativeCompactMenu.Entry("\uE76C","下一页",()=>taskbar.FlipPage(1)));}
-  items.Add(new NativeCompactMenu.Entry(preferences.taskbar.enabled?"\uE711":"\uE7F4",preferences.taskbar.enabled?"隐藏监测":"显示监测",ToggleDisplay));
-  if(!fromTaskbar)items.Add(new NativeCompactMenu.Entry("\uE7F4",preferences.widgetDesktop.enabled?"隐藏桌面监测":"显示桌面监测",ToggleDesktop));
+  var items=new List<NativeCompactMenu.Entry>();
+  if(fromDesktop)items.Add(new NativeCompactMenu.Entry("\uE711","隐藏监测",ToggleDesktop));
+  else{
+   items.Add(new NativeCompactMenu.Entry(preferences.taskbar.enabled?"\uE711":"\uE7F4",preferences.taskbar.enabled?"隐藏监测":"显示监测",ToggleDisplay));
+   if(!fromTaskbar)items.Add(new NativeCompactMenu.Entry("\uE7F4",preferences.widgetDesktop.enabled?"隐藏桌面监测":"显示桌面监测",ToggleDesktop));
+   if(fromTaskbar&&preferences.taskbar.PageCount>1){items.Add(new NativeCompactMenu.Entry("\uE76B","上一页",()=>taskbar.FlipPage(-1)));items.Add(new NativeCompactMenu.Entry("\uE76C","下一页",()=>taskbar.FlipPage(1)));}
+  }
+  items.Add(new NativeCompactMenu.Entry("\uE713","Peek 设置",ShowSettings));
   items.Add(null);
   items.Add(new NativeCompactMenu.Entry("\uE8AC","退出 Peek",Exit));
   menu.Open(appliedTheme,items,null,true);
@@ -217,11 +222,21 @@ internal sealed class WidgetRuntime:IDisposable {
  TaskbarSnapshot Snapshot(){var p=preferences;return TaskbarData.Compose(device,capture.Latest(device),capture.IntervalSeconds(device),light.Latest,p.localIntervalMs,p.widgetMonitoring);}
  void ConfigureDesktop(){
   if(!preferences.widgetDesktop.enabled){if(desktopWindow!=null){desktopWindow.Close();desktopWindow=null;}return;}
-  if(desktopWindow==null){var created=new WidgetDesktopWindow(WorkbenchHost.DataRoot,ShowSettings);desktopWindow=created;created.Closed+=(s,e)=>{if(ReferenceEquals(desktopWindow,created))desktopWindow=null;};}
+  if(desktopWindow==null){var created=new WidgetDesktopWindow(WorkbenchHost.DataRoot,ShowSettings,()=>ShowMenu(false,true));desktopWindow=created;created.Closed+=(s,e)=>{if(ReferenceEquals(desktopWindow,created))desktopWindow=null;};}
   desktopWindow.Configure(preferences.widgetDesktop,appliedTheme!="light",preferences.taskbar);
   desktopWindow.RenderSnapshot(Snapshot());
  }
- void ToggleDesktop(){try{var options=preferences.widgetDesktop.Normalize();options.enabled=!options.enabled;SaveTaskbar(preferences.taskbar.Normalize(),startup.Enabled,false,null,null,null,null,options);}catch(Exception ex){DiagnosticsLog.Write("widget-desktop-toggle",ex);}}
+ internal string ProbeNotification(){
+  if(!WidgetHost.TestMode||Environment.GetEnvironmentVariable("PEEK_SMOKE_NOTIFY")!="1")throw new InvalidOperationException("Unsupported command");
+  BrandShortcuts.RegisterPeekSender(preferences.iconThemeId,true);
+  tray.ShowBalloonTip(3500,"内存利用率提醒","76 %",System.Windows.Forms.ToolTipIcon.Info);
+  return BrandShortcuts.AppIdFor(BrandShortcuts.Executable);
+ }
+ void ToggleDesktop(){try{
+  var candidate=preferences.Copy();var options=preferences.widgetDesktop.Normalize();options.enabled=!options.enabled;
+  candidate.widgetDesktop=options;candidate.Save();preferences=candidate;
+  ConfigureDesktop();if(window!=null)window.RefreshParkedDraft();
+ }catch(Exception ex){DiagnosticsLog.Write("widget-desktop-toggle",ex);}}
  internal void CaptureDesktopForSmoke(){if(!WidgetHost.TestMode)throw new InvalidOperationException("Unsupported command");if(desktopWindow!=null)desktopWindow.CaptureForSmoke(WorkbenchHost.SmokeRoot);}
  internal object MonitoringState(){
   if(!WidgetHost.TestMode)throw new InvalidOperationException("Unsupported command");
@@ -339,6 +354,7 @@ internal sealed class WidgetRuntime:IDisposable {
   if(intervalChanged){capture.Configure(new[]{device},3,candidate.localIntervalMs);light.SetInterval(candidate.localIntervalMs);light.RequestRefresh();}
   if(iconChanged){
    var nextIcon=BrandIcons.Tray(candidate.iconThemeId);var oldIcon=trayIcon;
+   BrandShortcuts.RegisterPeekSender(candidate.iconThemeId);
    tray.Icon=nextIcon;trayIcon=nextIcon;oldIcon.Dispose();
    if(window!=null)window.ApplyIcon(candidate.iconThemeId);
   }
@@ -505,6 +521,7 @@ internal sealed class WidgetWindow:Window {
     case "widget.startup.repair":result=runtime.RepairStartup();break;
     case "widget.smoke.icon-state":result=runtime.SmokeIconState();break;
     case "widget.smoke.desktop.capture":runtime.CaptureDesktopForSmoke();break;
+    case "widget.smoke.notify":result=runtime.ProbeNotification();break;
     case "widget.smoke.frame.capture":result=CaptureFrameForSmoke();break;
     case "widget.smoke.monitoring":result=runtime.MonitoringState();break;
     case "widget.sources":result=runtime.Sources();break;

@@ -142,3 +142,40 @@
 .peek-icon-choice>svg{position:absolute;right:3px;top:3px;color:var(--success)}
 .peek-about-icon{flex:none;object-fit:contain}
 @media(max-width:470px){.peek-icon-choices{grid-template-columns:repeat(4,minmax(0,1fr))}}
+/* Desktop layout: a fixed readout grid under a resizable, independently tinted surface. */
+
+.peek-desktop-position input{font:inherit;min-height:28px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--text);padding:0 8px}
+.peek-desktop-stage{min-height:96px;padding:5px 16px 3px;display:grid;justify-items:center;align-content:center;overflow:auto;scrollbar-width:thin}
+.peek-desktop-preview{display:block;position:relative;flex:none;box-sizing:border-box;background:rgb(var(--peek-shell)/var(--peek-paper-alpha));box-shadow:inset 0 0 0 1px var(--peek-rim);border-radius:16px;color:var(--widget-value);--peek-shell:252 248 239;--peek-rim:rgba(213,204,186,.58);--peek-guide:rgba(112,96,71,.24);--peek-selection:rgba(105,86,48,.64);--peek-tint:rgba(126,103,56,.10);--widget-value:#1f3749;--widget-label:#476375;--widget-unit:#476375;--widget-accent:#19839c;--muted:var(--widget-label);transition:width 150ms cubic-bezier(.22,.74,.28,1),height 150ms cubic-bezier(.22,.74,.28,1),background-color 145ms ease-out}
+html[data-appearance-mode=dark] .peek-desktop-preview{--peek-shell:37 37 39;--peek-rim:rgba(99,99,104,.58);--peek-guide:rgba(224,224,229,.24);--peek-selection:rgba(224,224,229,.60);--peek-tint:rgba(224,224,229,.10);--widget-value:#e1e2e6;--widget-label:#e1e2e6;--widget-unit:#b3b5bc;--widget-accent:#82d7e9}
+.peek-desktop-preview[data-resizing=true]{transition:none}
+.peek-desktop-grid{position:absolute;top:8px;left:11px;overflow:hidden;transition:width 150ms cubic-bezier(.22,.74,.28,1),height 150ms cubic-bezier(.22,.74,.28,1)}
+.peek-desktop-preview[data-resizing=true] .peek-desktop-grid{transition:none}
+.peek-desktop-slot{position:absolute;height:17px;overflow:hidden;display:flex;align-items:center;border-radius:5px;box-shadow:inset 0 0 0 1px transparent;transition:box-shadow 140ms ease-out,background-color 140ms ease-out}
+.peek-desktop-slot[data-guide=true]:hover{box-shadow:inset 0 0 0 1px var(--peek-guide)}
+.peek-desktop-slot[data-guide=true][data-selected=true]:hover,.peek-desktop-slot[data-guide=true][data-drop=true]{box-shadow:inset 0 0 0 1px var(--peek-selection);background:var(--peek-tint)}
+.tb42-editor .peek-desktop-slot>button,.tb42-editor .peek-desktop-slot>button:enabled:hover{border:0;border-radius:inherit;background:transparent;padding:0;min-height:0;display:flex;align-items:center;justify-content:flex-start;width:100%;height:100%;gap:0;color:var(--widget-label);overflow:hidden;cursor:grab}
+.tb42-editor .peek-desktop-slot>button:focus-visible{outline:1px solid var(--widget-label);outline-offset:-2px;border-radius:5px}
+.peek-desktop-empty{margin:auto;font-size:13px;opacity:.62}
+/* Resize targets stop at the padding, never on a readout or an empty slot. */
+.tb42-editor .peek-desktop-grip,.tb42-editor .peek-desktop-grip:enabled:hover{position:absolute;z-index:2;border:0;border-radius:0;padding:0;min-width:0;min-height:0;background:transparent;color:var(--muted);display:grid;place-items:center;touch-action:none}
+.tb42-editor .peek-desktop-grip.right{right:-9px;width:13px;top:3px;bottom:5px;cursor:ew-resize}
+.tb42-editor .peek-desktop-grip.bottom{bottom:-8px;height:12px;left:8px;right:12px;cursor:ns-resize}
+.peek-desktop-grip.right::before,.peek-desktop-grip.bottom::before{content:'';border-radius:2px;background:currentColor;opacity:.58}
+.peek-desktop-grip.right::before{width:2px;height:12px}.peek-desktop-grip.bottom::before{height:2px;width:16px}
+.peek-desktop-opacity{display:grid;grid-template-columns:1fr minmax(70px, min(40%, 200px)) 35px;gap:9px;align-items:center;min-height:28px}
+.peek-desktop-opacity input{width:100%;min-width:0;accent-color:var(--muted)}.peek-desktop-opacity output{text-align:right;font-variant-numeric:tabular-nums}
+@media(prefers-reduced-motion:reduce){.peek-desktop-preview,.peek-desktop-grid,.peek-desktop-slot{transition:none}}
+
+.peek-desktop-preview .taskbar-mini-cell:not([data-custom-name=true]) .taskbar-cell-label{fill:var(--widget-label)}
+.peek-desktop-preview .taskbar-cell-number{fill:var(--tb-custom-reading,var(--widget-value))}
+.peek-desktop-preview .taskbar-cell-unit{fill:var(--tb-custom-reading,var(--widget-unit))}
+.peek-desktop-preview .taskbar-mini-cell[data-custom-name=true] .taskbar-cell-label{fill:var(--tb-custom-name)}
+
+.peek-desktop-ink{display:block;flex:none}
+
+.peek-desktop-position{padding:8px 4px;display:grid;align-content:start;gap:10px}
+.peek-desktop-position .widget-option-row{display:grid;grid-template-columns:1fr minmax(96px,44%);gap:12px;align-items:center}
+.peek-desktop-position output{justify-self:end}
+.peek-desktop-position input{min-width:0;color:var(--text)}
+.peek-desktop-position .widget-group-note{margin:5px 0 0}

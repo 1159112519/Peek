@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 
@@ -12,8 +12,8 @@ internal sealed class TaskbarSqueezeLayout {
  readonly float[] prefix;
  internal float FullWidth{get{return Width(Columns,MaxGap);}}
  internal float MinimumRoom(bool reduced){return Width(1,0)-(reduced?0:FadeSpan);}
- internal TaskbarSqueezeLayout(TaskbarModule[] modules,TaskbarCellInk[] cells=null){
-  Modules=modules;Columns=modules.Length/2;Cells=cells;Left=new float[Columns];Right=new float[Columns];prefix=new float[Columns+1];
+ internal TaskbarSqueezeLayout(TaskbarModule[] modules,TaskbarCellInk[] cells=null,int columnCount=0,float emptyWidth=12){
+  Modules=modules;Columns=columnCount==0?modules.Length/2:columnCount;Cells=cells;Left=new float[Columns];Right=new float[Columns];prefix=new float[Columns+1];
   for(int col=0;col<Columns;col++){
    bool found=false;float reserve=0;
    for(int i=col;i<modules.Length;i+=Columns){
@@ -24,7 +24,7 @@ internal sealed class TaskbarSqueezeLayout {
     }else if(modules[i]!=null){int charts=0;foreach(string part in modules[i].Parts)if(part!="number")charts++;reserve=Math.Max(reserve,charts*GraphSpace);}
    }
    // Empty positions keep their column slot; the width bound is also used before a sample is available.
-   if(!found)Right[col]=cells==null?MaxColumnWidth+reserve:12;
+   if(!found)Right[col]=cells==null?MaxColumnWidth+reserve:emptyWidth;
    prefix[col+1]=prefix[col]+Right[col]-Left[col];
   }
  }
@@ -110,39 +110,26 @@ internal sealed class TaskbarSqueezeMotion {
   if(!ready||reduced){ready=true;from=to=room;duration=0;origin=last=null;recovering=false;return;}
   if(Math.Abs(to-room)<.25f)return;
   recovering=room>to;from=Value(now);origin=last;to=room;start=now;
-  duration=from==to?0:420;
+  duration=from==to?0:240;
  }
  internal TaskbarSqueezeFrame Frame(TaskbarSqueezeLayout layout,float room,long now,bool reduced){
-  // Retain survivor spacing while restoring columns; reversing the compression curve
-  // would tighten it again before each new column and visibly bounce.
-  var target=layout.Frame(room,reduced,recovering);
-  // A release can interrupt a retirement before the next full column fits. Preserve
-  // its current visibility instead of first fading it out and bringing it back.
-  if(recovering&&last!=null&&last.Layout.Columns==layout.Columns)for(int i=0;i<layout.Columns;i++)if(target.Alpha[i]<last.Alpha[i]){target.Alpha[i]=last.Alpha[i];target.X[i]=last.X[i];target.Blur[i]=last.Blur[i];target.Departing[i]=last.Departing[i];}
-  if(reduced||!Active(now)||origin==null||origin.Layout.Columns!=layout.Columns)return last=target;
-  float time=TaskbarSqueezeLayout.Clamp((now-start)/(float)duration);
-  bool exiting=false,entering=false;
-  for(int i=0;i<layout.Columns;i++){exiting|=origin.Alpha[i]>target.Alpha[i]+.001f;entering|=origin.Alpha[i]+.001f<target.Alpha[i];}
-  var compact=layout.CompactFrame();var result=new TaskbarSqueezeFrame(layout);
+  var target=layout.Frame(room,reduced);
+  if(reduced||origin==null||origin.Layout.Columns!=layout.Columns)return last=target;
+  float time=duration>0?TaskbarSqueezeLayout.Clamp((now-start)/(float)duration):1;
+  float eased=(float)TaskbarPainter.Ease(time);
+  var result=new TaskbarSqueezeFrame(layout);
   for(int i=0;i<layout.Columns;i++){
    float a=origin.Alpha[i],b=target.Alpha[i];
-   float sourceX=a>0?origin.X[i]:target.X[i]-7;
-   float targetX=b>0?target.X[i]:Math.Min(sourceX,compact.X[i])-3;
-   float movement=(float)TaskbarPainter.Ease(time);
-   if(!recovering&&exiting&&!entering){
-    // First tighten the gaps, then retire entire columns, then settle the survivors.
-    float tighten=(float)TaskbarPainter.Ease(Math.Min(1,time/.24f));
-    float settle=(float)TaskbarPainter.Ease(Math.Max(0,(time-.78f)/.22f));
-    float tightX=Math.Min(sourceX,compact.X[i]);
-    result.X[i]=sourceX+(tightX-sourceX)*tighten+(targetX-tightX)*settle;
-    movement=(float)TaskbarPainter.Ease(TaskbarSqueezeLayout.Clamp((time-.16f)/.68f));
-    if(b<a)result.X[i]-=3*movement*(1-settle);
-   }else result.X[i]=sourceX+(targetX-sourceX)*movement;
-   result.Alpha[i]=a+(b-a)*movement;
+   // A surviving column must not reopen its gap after the outer column leaves.
+   // Retarget from the last painted pose, with one non-overshooting interpolation per axis.
+   float sourceX=a>0?origin.X[i]:target.X[i]-4;
+   float targetX=b>0?target.X[i]:sourceX-3;
+   if(!recovering&&a>0){b=Math.Min(a,b);targetX=Math.Min(sourceX,targetX);}
+   if(recovering&&a>0){b=Math.Max(a,b);targetX=Math.Max(sourceX,targetX);}
+   result.X[i]=sourceX+(targetX-sourceX)*eased;
+   result.Alpha[i]=a+(b-a)*eased;
    result.Blur[i]=2.8f*(1-result.Alpha[i]);
-   result.Departing[i]=result.Alpha[i]<.9999f||target.Departing[i]||b<a;
-   // Survivors must fit the new proven free area even if Explorer moved in one step.
-   // Only retiring columns may be squashed by the compositor; active glyphs stay unchanged.
+   result.Departing[i]=result.Alpha[i]<.9999f||b<a;
    if(!result.Departing[i])result.X[i]=Math.Min(result.X[i],room-layout.Right[i]-TaskbarSqueezeLayout.InkPadding);
   }
   return last=result;
@@ -157,10 +144,23 @@ internal sealed class TaskbarRoomStability {
  internal float Accept(float room,long now){
   if(!ready){ready=true;accepted=room;return room;}
   if(room<accepted){accepted=room;pending=false;return room;}
-  if(room<=accepted+.25f){pending=false;return accepted;}
+  if(room<=accepted+1f){pending=false;return accepted;}
   if(!pending){pending=true;candidate=room;since=now;}
   else if(room<candidate-.25f){candidate=room;since=now;}
   if(now-since>=160){accepted=Math.Min(room,candidate);pending=false;}
   return accepted;
+ }
+}
+
+// A popup can interrupt Explorer's UIA tree without moving the actual taskbar controls.
+// Retain the last proven geometry only for a live parent and matching shell bounds.
+internal sealed class TaskbarProbeHold {
+ long unverifiedSince=-1;
+ internal void Reset(){unverifiedSince=-1;}
+ internal bool Keep(long now,bool sameShell,bool menuOpen,bool incomplete){
+  if(!sameShell||(!menuOpen&&!incomplete)){Reset();return false;}
+  if(menuOpen){Reset();return true;}
+  if(unverifiedSince<0)unverifiedSince=now;
+  return now-unverifiedSince<640;
  }
 }

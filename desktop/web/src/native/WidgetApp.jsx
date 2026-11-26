@@ -30,7 +30,7 @@ export function prepareWidget(){
 const appearanceOptions=[['light',Sun,'浅色'],['dark',Moon,'深色'],['system',Monitor,'跟随系统']];
 
 const settingsTabs=[['general','常规'],['taskbar','任务栏'],['desktop','桌面'],['sampling','采集'],['about','关于']];
-const pageTitles={taskbar:'任务栏布局',desktop:'桌面浮窗',sampling:'数据采集',general:'常规设置',about:'关于与更新'};
+const pageTitles={taskbar:'任务栏布局',desktop:'桌面组件',sampling:'数据采集',general:'常规设置',about:'关于与更新'};
 function WidgetPage({name,busy,children}){
  return <div className="native-preferences-body widget-settings-body"><div className="widget-page" inert={busy||undefined}>
   <header className="widget-page-heading"><h1>{t(pageTitles[name])}</h1></header>{children}
@@ -113,7 +113,7 @@ export function WidgetApp({initialSettings,initialError}){
    taskbar:<WidgetPage name="taskbar" busy={busy}>
     {draft?<TaskbarSettings key={epoch} standalone active={visible&&page==='taskbar'} value={draft.taskbar} savedValue={saved.taskbar} settings={props=><WidgetTaskbarOptions {...props} displays={sources?.displays} openWindows={async()=>{try{await native.request('widget.windows.taskbar')}catch(e){setError(e.message)}}}/>} onChange={value=>change('taskbar',value)}/>:!error&&<p role="status">{t('正在读取设置…')}</p>}
    </WidgetPage>,
-   desktop:<WidgetPage name="desktop" busy={busy}>{draft&&<WidgetDesktopSettings draft={draft} change={change} active={page==='desktop'}/>}</WidgetPage>,
+   desktop:<WidgetPage name="desktop" busy={busy}>{draft&&<WidgetDesktopSettings draft={draft} saved={saved?.desktop} change={change} active={visible&&page==='desktop'}/>}</WidgetPage>,
    sampling:<WidgetPage name="sampling" busy={busy}>{draft&&<WidgetSampling draft={draft} change={change} sources={sources}/>}</WidgetPage>,
    general:<WidgetPage name="general" busy={busy}>
     {draft&&<div className="widget-general-groups">

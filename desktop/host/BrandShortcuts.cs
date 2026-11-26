@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -28,6 +28,28 @@ public static class BrandShortcuts {
 #endif
  }}
  public static void SetProcessIdentity(){try{Marshal.ThrowExceptionForHR(SetCurrentProcessExplicitAppUserModelID(AppIdFor(Executable)));}catch{}}
+#if ASTERHUB_WIDGET
+ // Persist the friendly sender for the same per-launcher AppUserModelID already used by Peek.
+ internal static void RegisterPeekSender(string iconId,bool isolatedTest=false){
+  SetProcessIdentity();
+  if(WidgetHost.TestMode!=isolatedTest)return;
+  try{
+   string executable=Executable,appId=AppIdFor(executable),icon=CachedIcon(WorkbenchHost.DataRoot,iconId);
+   using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Classes\AppUserModelId\"+appId)){
+    key.SetValue("DisplayName",ProductName,Microsoft.Win32.RegistryValueKind.String);
+    key.SetValue("IconUri",icon,Microsoft.Win32.RegistryValueKind.String);
+   }
+   if(isolatedTest)return;
+   foreach(var scope in new[]{Environment.SpecialFolder.Programs,Environment.SpecialFolder.CommonPrograms}){
+    var programs=Environment.GetFolderPath(scope);
+    if(string.IsNullOrEmpty(programs))continue;
+    foreach(var shortcut in new[]{Path.Combine(programs,ProductName,ProductName+".lnk"),Path.Combine(programs,ProductName+".lnk")}){
+     if(UpdateShortcut(shortcut,executable,icon,appId))return;
+    }
+   }
+  }catch(Exception error){DiagnosticsLog.Write("peek-notification-identity",error);}
+ }
+#endif
  internal static string CachedIcon(string dataRoot,string iconId){string folder=Path.Combine(dataRoot,"Branding"),source=BrandIcons.WindowAsset(iconId),version;Directory.CreateDirectory(folder);using(var sha=System.Security.Cryptography.SHA256.Create())version=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(source))).Replace("-","").Substring(0,16);string cached=Path.Combine(folder,"app-"+BrandIcons.Normalize(iconId)+"-"+version+".ico");if(!File.Exists(cached))File.Copy(source,cached);return cached;}
  static BrandPropertyKey Key(uint property){return new BrandPropertyKey{format=ModelFormat,id=property};}
  internal static void WriteString(BrandPropertyStore store,uint property,string text){var key=Key(property);var value=BrandVariant.Text(text);try{Marshal.ThrowExceptionForHR(store.SetValue(ref key,ref value));}finally{value.Dispose();}}

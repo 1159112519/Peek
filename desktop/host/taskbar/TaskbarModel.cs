@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -71,7 +71,7 @@ public sealed class TaskbarSettings {
  // Colors are optional, opaque per-metric overrides; absent values keep system colors.
  static readonly string[] ColorParts={"label","reading","graph"};
  static bool TryColor(string value,out int rgb){rgb=0;return value.Length==7&&value[0]=='#'&&int.TryParse(value.Substring(1),NumberStyles.AllowHexSpecifier,CultureInfo.InvariantCulture,out rgb);}
- static Dictionary<string,object> NormalizeColors(object value){
+ internal static Dictionary<string,object> NormalizeColors(object value){
   var map=new Dictionary<string,object>();var input=Obj(value);
   foreach(string metric in Metrics){var row=Obj(Get(input,metric));if(row==null)continue;var clean=new Dictionary<string,object>();
    foreach(string part in ColorParts){int rgb;if(TryColor(Str(Get(row,part)),out rgb))clean[part]="#"+rgb.ToString("X6",CultureInfo.InvariantCulture);}
@@ -119,8 +119,8 @@ public sealed class TaskbarSettings {
  }
 }
 internal sealed class TaskbarModule {
- internal readonly Dictionary<string,object> Data;readonly bool compact,single;
- internal TaskbarModule(Dictionary<string,object> data,bool compact,bool single=false){Data=data;this.compact=compact;this.single=single;}
+ internal readonly Dictionary<string,object> Data;readonly bool compact,single;readonly string desktopLabel;
+ internal TaskbarModule(Dictionary<string,object> data,bool compact,bool single=false,string desktopLabel=null){Data=data;this.compact=compact;this.single=single;this.desktopLabel=desktopLabel;}
  internal string Id{get{return TaskbarSettings.Str(TaskbarSettings.Get(Data,"id"));}}
  internal string Metric{get{return TaskbarSettings.Str(TaskbarSettings.Get(Data,"metricId"));}}
  internal string[] Parts{get{
@@ -131,6 +131,7 @@ internal sealed class TaskbarModule {
  }}
  internal static string DefaultVariant(string id){return id=="up"||id=="down"?"arrow":id.StartsWith("cpu")||id.StartsWith("gpu")&&id!="gpuMemory"&&id!="gpuFan"&&id!="gpuPower"||id=="storageRead"||id=="storageWrite"?"english":"chinese";}
  internal string Label(string fallback){
+  if(!string.IsNullOrWhiteSpace(desktopLabel))return desktopLabel;
   var name=TaskbarSettings.Obj(TaskbarSettings.Get(Data,"name"));string v=TaskbarSettings.Str(TaskbarSettings.Get(name,"variant"));
   if(Metric=="down"||Metric=="up")return v=="chinese"?(Metric=="up"?"上传":"下载"):(Metric=="up"?"↑":"↓");
   if(Metric=="memory"&&v=="ram")return "RAM";if(Metric=="storage"&&v=="ssd")return "SSD";
