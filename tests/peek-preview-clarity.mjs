@@ -17,6 +17,7 @@ Object.assign(fixture.taskbar.layout.pages[0],{grid:{columns:3,rows:2},slots:ids
 fixture.widgetAutoCheckUpdates=false;
 fixture.widgetMonitoring={...fixture.widgetMonitoring,probeGateway:false};
 Object.assign(fixture.widgetDesktop,{enabled:true,hideFullscreen:false,columns:3,rows:process.env.PEEK_MEMORY_ONLY==='1'?3:2,showUnits:true,memoryMode:'used',cells:['cpu','memoryUsed','gpu','down','memory','up','ping','gpuPower','loss'],labels:{memory:'RAM',memoryUsed:'RAM'},modules:Object.fromEntries(['gpu','memory','ping','gpuPower','memoryUsed','loss'].map(id=>[id,{variant:'english',parts:['number']}]))});
+if(process.env.PEEK_HAN_LABELS==='1')Object.assign(fixture.widgetDesktop.labels,{cpu:'处理器',gpu:'显卡',memory:'内存',memoryUsed:'已用'});
 await fs.writeFile(path.join(data,'preferences.json'),JSON.stringify(fixture));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const bridge=(p,method,params={})=>p.evaluate(({method,params})=>new Promise((resolve,reject)=>{
@@ -45,6 +46,7 @@ async function run(body){
   await fs.writeFile(path.join(evidence,'native-status.json'),JSON.stringify(Object.fromEntries(['ping','loss','gpuFan','gpuPower'].map(id=>[id,nativeStatus.snapshot.values[id]])),null,2));
   await p.evaluate(polish=>{const values=Object.fromEntries([['cpu',79,'%',0],['memory',89,'%',0],['memoryUsed',14.1,'GB',1],['gpu',0,'%',0],['gpuMemory',55,'%',0],['down',polish?98.5:169,'K/s',polish?1:0],['up',polish?10.2:4,'K/s',1],['storageRead',990,'K/s',0],['storageWrite',37.2,'M/s',1],['ping',23,'ms',0],['loss',0,'%',0],['gpuPower',5,'W',0],['gpuFan',null,'%',0]].map(([id,value,unit,decimals])=>[id,{value,unit,decimals,timeUtc:'fixture'}]));
   values.gpuFan.reason='显卡驱动未提供风扇读数';
+  window.__peekQaValues=values;
   const w=chrome.webview,post=w.postMessage.bind(w);w.postMessage=msg=>{if(msg.method!=='taskbar.status')return post(msg);queueMicrotask(()=>w.dispatchEvent(new MessageEvent('message',{data:{id:msg.id,ok:true,result:{snapshot:{values}}}})));};},process.env.PEEK_SETTINGS_POLISH==='1');
   await p.locator('.foundation-tool-navigation').getByRole('tab',{name:'桌面',exact:true}).click();
   await p.locator('.peek-desktop-preview').waitFor();await body(p);assert.deepEqual(errors,[]);
@@ -248,7 +250,43 @@ async function catalogueAndGateway(p){
  }
  assert.match(await status.innerText(),/网关未响应 ICMP/);
 }
-if(process.env.PEEK_CATALOGUE_GATEWAY==='1')await run(catalogueAndGateway);
+if(process.env.PEEK_HAN_LABELS==='1')await run(async p=>{
+ const names=['处理器','已用','显卡','内存'];
+ const label=name=>p.locator('.peek-desktop-grid .taskbar-cell-label').filter({hasText:new RegExp('^'+name+'$')});
+ await label('显卡').waitFor();
+ for(const mode of ['light','dark']){
+  await theme(p,mode);const states=[];
+  for(const missing of [false,true]){
+   await p.evaluate(missing=>{for(const [id,value] of Object.entries({cpu:63,memoryUsed:13.9,gpu:63,memory:89}))window.__peekQaValues[id].value=missing?null:value;},missing);
+   await p.waitForFunction(([names,missing])=>names.every(name=>{
+    const el=[...document.querySelectorAll('.peek-desktop-grid .taskbar-cell-label')].find(el=>el.textContent===name);
+    const digits=el?.closest('svg').querySelector('.taskbar-cell-number');
+    const glyphs=[...(digits?.querySelectorAll('[data-digit]')??[])].map(el=>el.dataset.digit).join('');
+    return missing?glyphs==='—':/[0-9]/.test(glyphs);
+   }),[names,missing]);
+   await wait(240);
+   const boxes=await p.locator('.peek-desktop-grid .taskbar-cell-label').evaluateAll((nodes,names)=>names.map(name=>{
+    const node=nodes.find(el=>el.textContent===name),svg=node.closest('svg'),m=svg.getBoundingClientRect(),d=devicePixelRatio;
+    const box=el=>{const r=el.getBoundingClientRect();return {left:(r.left-.4)*d,right:(r.right+.4)*d,top:m.top*d,bottom:m.bottom*d};};
+    return {name,origin:Math.round(m.top*d),label:box(node),digits:box(svg.querySelector('.taskbar-cell-number')),labelY:node.getAttribute('y')};
+   }),names);
+   const png=PNG.sync.read(await p.screenshot({path:path.join(evidence,`han-preview-${mode}-${missing?'missing':'value'}.png`)}));
+   states.push(boxes.map(box=>{
+    const label=pixelInk(png,box.label,mode==='dark'),digits=pixelInk(png,box.digits,mode==='dark');
+    return {name:box.name,foot:label.bottom-box.origin,digitFoot:digits.bottom-box.origin,labelY:Number(box.labelY)};
+   }));
+  }
+  await fs.writeFile(path.join(evidence,`han-preview-${mode}.json`),JSON.stringify(states,null,2));
+  for(const [i,value] of states[0].entries()){
+   const missing=states[1][i];
+   assert(Math.abs(value.foot-value.digitFoot)<=1,`${mode} ${value.name}: label vs digits ${JSON.stringify(value)}`);
+   assert(Math.abs(missing.foot-value.foot)<=1,`${mode} ${value.name}: label jumps before and after a reading`);
+   assert.equal(missing.labelY,value.labelY,`${mode} ${value.name}: numeric reference changed on a missing reading`);
+  }
+  console.log(`${mode}: checked all ${names.length} Chinese preview labels, with values and dashes`);
+ }
+});
+else if(process.env.PEEK_CATALOGUE_GATEWAY==='1')await run(catalogueAndGateway);
 else if(process.env.PEEK_SETTINGS_POLISH==='1')await run(settingsChromeAndRates);
 else if(process.env.PEEK_MEMORY_ONLY==='1')await run(async p=>{
  await theme(p,'light');

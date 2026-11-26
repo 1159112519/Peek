@@ -8,7 +8,7 @@
 
 入口：同目录树的 `tests/peek-desktop-smoke.mjs`、`tests/peek-preview-clarity.mjs`、`tests/PeekDesktopLayoutProbe.cs`、`tests/peek-desktop-layout-pixels.mjs`、`tests/PeekTaskbarSqueezeProbe.cs`。原生压缩夹具使用确定的可用宽度序列，不代替真实应用按钮占位测试。
 
-桌面中文底边：用窗口夹具 PeekDesktopLayoutProbe.cs 和 peek-desktop-han-pixels.mjs 检查浅深色的「内存 89%」「已用 13.9 G」，同时验证西文、缺测、字号、横向位置及数值和单位保持原样。
+桌面中文底边：用窗口夹具 PeekDesktopLayoutProbe.cs 和 peek-desktop-han-pixels.mjs 检查浅深色的「内存 89%」「已用 13.9 G」、中文「显卡」与自定义名称有值和缺测切换时是否仍贴同一数字底边。用最终包预览重复检查，验证英文 GPU/CPU、横杠、字号、横向位置、数字和单位保持原样。
 
 ## 正式版更新回归
 

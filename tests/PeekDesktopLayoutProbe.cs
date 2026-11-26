@@ -30,6 +30,12 @@ public sealed class PeekDesktopLayoutProbe {
   foreach(bool dark in new[]{false,true}){
    Capture(a,output,dark,"han",new[]{"cpu","memory","gpu",null,null,null,null,null,null},new[]{"CPU","内存","显卡"},new[]{"%","%","%"},new double?[]{63,89,null},new[]{0,0,0},1);
    Capture(a,output,dark,"han-used",new[]{"cpu","memoryUsed","gpu",null,null,null,null,null,null},new[]{"CPU","已用","显卡"},new[]{"%","GB","%"},new double?[]{63,13.9,null},new[]{0,1,0},1);
+   foreach(var kind in new[]{"gpu","gpu-han","cpu-han","used-han","cpu-stock"}){
+    string id=kind=="cpu-han"||kind=="cpu-stock"?"cpu":kind=="used-han"?"memoryUsed":"gpu";
+    string name=kind=="cpu-stock"?"CPU":kind=="cpu-han"?"处理器":kind=="used-han"?"已用":kind=="gpu-han"?"显卡":"GPU";
+    string unit=kind=="used-han"?"GB":"%";
+    foreach(bool missing in new[]{false,true})Capture(a,output,dark,kind+(missing?"-missing":"-value"),new[]{id,null,null,null,null,null,null,null,null},new[]{name},new[]{unit},new double?[]{missing?(double?)null:kind=="used-han"?13.9:63},new[]{kind=="used-han"?1:0},1);
+   }
    Capture(a,output,dark,"columns",new[]{"cpu","memoryUsed","gpu","down","memory","up","ping","gpuPower","loss"},new[]{"CPU","RAM","GPU","↓","RAM","↑","Ping","PWR","Loss"},new[]{"%","GB","%","K/s","%","K/s","ms","W","%"},new double?[]{79,12.8,0,169,89,4,23,5,0},new[]{0,1,0,0,0,1,0,0,0},3);
    Capture(a,output,dark,"align",new[]{"memoryUsed","cpu","gpu","down","gpuMemory","storageRead","up","cpuFrequency","storageWrite"},new[]{"RAM","CPU","GPU","↓","VRAM","R","↑","CPU","W"},new[]{"GB","%","%","K/s","%","K/s","K/s","GHz","M/s"},new double?[]{13.7,24,0,160.5,8,230,9.9,4.7,1.1},new[]{1,0,0,1,0,0,1,1,1},3);
    Capture(a,output,dark,"digits",new[]{"cpu","memoryUsed","gpu","down","memory","up",null,null,null},new[]{"CPU","RAM","GPU","↓","RAM","↑"},new[]{"%","GB","%","K/s","%","K/s"},new double?[]{63,13.9,null,null,88,null},new[]{0,1,0,0,0,0},2);

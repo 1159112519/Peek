@@ -201,8 +201,9 @@ export function Readout({id,module,peer,snapshot,numberMotion='direct',chartMoti
  const labelCenter=nameOnly?8.5:(geometry?.center??8.5)+adjust('label');
  // Keep names as text: the font rasterizer handles stems and antialiasing at
  // the final origin. The optical pairs use ink bounds for placement, not painting.
- const desktopHan=desktopReadout&&!Icon&&numeric&&/[0-9]/.test(text)&&/[\u3400-\u9fff\uf900-\ufaff]/.test(renderedLabel);
- const hanBottom=(geometry?(geometry.foot-phase.y)/phase.sy:bottom)+adjust('label');
+ const desktopHan=desktopReadout&&!Icon&&numeric&&/[\u3400-\u9fff\uf900-\ufaff]/.test(renderedLabel);
+ // The name follows the numeric rail, not the ink of the centered missing-data glyph.
+ const hanBottom=(problem&&phase.sy?(Math.round(phase.y+bottom*phase.sy)-phase.y)/phase.sy:bottom)+adjust('label');
  const labelY=desktopHan
   ?taskbarInkY(renderedLabel,labelFont,hanBottom,{x:legacyPhase.x+labelX,y:legacyPhase.y},160)
   :centerCatalogueName&&namePosition?catalogueY:geometry

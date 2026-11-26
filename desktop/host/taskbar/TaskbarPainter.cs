@@ -420,9 +420,12 @@ internal sealed class TaskbarPainter:IDisposable {
      else {
       var font=IsAscii(label)?labelFont:hanFont;
       float nameBottom=problem?LabelBottom(label,font,nameInk,opticalCenter):bottom;
-      if(desktopOrigins!=null&&parts.Contains("number")&&HasHan(label)&&cell.Text.Any(ch=>ch>='0'&&ch<='9'))
-       DesktopHan(label,nameInk,labelX,nameBottom,numberBottom+options.Offset(id,"label"));
-      else Put(g,label,font,nameInk,labelX,nameBottom);
+      if(desktopOrigins!=null&&parts.Contains("number")&&HasHan(label)){
+       // The digit rail stays fixed even when the reading is drawn as a centered dash.
+       // Keep the label's raster phase independent of a unit appearing or disappearing.
+       float rasterBottom=problem?LabelBottom(label,font,nameInk,top+ProblemCenter(options,id,"")+options.Offset(id,"label")):nameBottom;
+       DesktopHan(label,nameInk,labelX,rasterBottom,numberBottom+options.Offset(id,"label"));
+      }else Put(g,label,font,nameInk,labelX,nameBottom);
      }
      if(!parts.Contains("number"))continue;
      string text=cell.Text,prior=FitNumber(priorDisplay,cell.NumberTrack);float advance=NumberWidth(text),cx=x+cell.NumberX+cell.NumberTrack-advance;
