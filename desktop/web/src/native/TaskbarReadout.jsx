@@ -201,7 +201,11 @@ export function Readout({id,module,peer,snapshot,numberMotion='direct',chartMoti
  const labelCenter=nameOnly?8.5:(geometry?.center??8.5)+adjust('label');
  // Keep names as text: the font rasterizer handles stems and antialiasing at
  // the final origin. The optical pairs use ink bounds for placement, not painting.
- const labelY=centerCatalogueName&&namePosition?catalogueY:geometry
+ const desktopHan=desktopReadout&&!Icon&&numeric&&/[0-9]/.test(text)&&/[\u3400-\u9fff\uf900-\ufaff]/.test(renderedLabel);
+ const hanBottom=(geometry?(geometry.foot-phase.y)/phase.sy:bottom)+adjust('label');
+ const labelY=desktopHan
+  ?taskbarInkY(renderedLabel,labelFont,hanBottom,{x:legacyPhase.x+labelX,y:legacyPhase.y},160)
+  :centerCatalogueName&&namePosition?catalogueY:geometry
   ?centerTaskbarInk(readoutLabelBody(renderedLabel),labelFont,0,labelCenter).y
   :taskbarInkY(renderedLabel,labelFont,13.5+adjust('label'),{x:legacyPhase.x+labelX,y:legacyPhase.y});
  return <svg ref={root} className="taskbar-mini-cell" data-proportional-ink={proportionalInk||undefined} data-custom-name={Boolean(colors?.[id]?.label)} viewBox={`0 0 ${visibleWidth} 17`} width={visibleWidth*scale} height={17*scale} style={{...metricCss(colors,id),width:visibleWidth*scale,minWidth:visibleWidth*scale,overflow:mode?undefined:'visible'}} role="img" aria-label={`${tr(row?.[1]||id||'空位置')} ${text} ${unit}`}>

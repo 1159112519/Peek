@@ -11,6 +11,7 @@ internal sealed class TaskbarPainter:IDisposable {
  const int S=4, DigitXPhases=8, DigitBlurPad=18;int width,height;readonly bool dark;readonly PrivateFontCollection latin=new PrivateFontCollection(),medium=new PrivateFontCollection(),han=new PrivateFontCollection();readonly Dictionary<string,Bitmap> glyphs=new Dictionary<string,Bitmap>();readonly Dictionary<Bitmap,int> inkTop=new Dictionary<Bitmap,int>();readonly Dictionary<Font,int> referenceBottom=new Dictionary<Font,int>();
  readonly Dictionary<Tuple<char,float,int,int,int>,DigitInk> digitInk=new Dictionary<Tuple<char,float,int,int,int>,DigitInk>();
  readonly Dictionary<Tuple<string,float,int>,DigitInk> unitInk=new Dictionary<Tuple<string,float,int>,DigitInk>();
+ readonly Dictionary<Tuple<string,int,float,int,float,float>,DigitInk> desktopHanInk=new Dictionary<Tuple<string,int,float,int,float,float>,DigitInk>();
  readonly List<DigitDraw> digitQueue=new List<DigitDraw>(32);
  sealed class DigitInk {internal Bitmap Image;internal int Foot,Offset,Left,Right;}
  struct DigitDraw {internal DigitInk Ink;internal int X,Y;internal double Opacity;internal Rectangle Clip;internal Color? Tint;}
@@ -143,14 +144,36 @@ internal sealed class TaskbarPainter:IDisposable {
   // Displacement is relative to the same anchored position and never saved in the glyph cache.
   digitQueue.Add(new DigitDraw{Ink=ink,X=left+valueShift,Y=foot-ink.Foot+(int)Math.Round(displacement*sy),Opacity=opacity,Clip=clip,Tint=tint});
  }
+ static bool HasHan(string text){return text.Any(ch=>ch>='\u3400'&&ch<='\u9fff'||ch>='\uf900'&&ch<='\ufaff');}
+ void DesktopHan(string text,Color color,float x,float originalBottom,float numberBottom){
+  // Preserve the original raster phase on both axes, then translate only Y
+  // by whole device pixels. Ignore thin antialias fringes when finding the Han foot.
+  const int pad=3;
+  float sy=height/38f,px=x*renderScaleX,py=originalBottom*sy;
+  int left=(int)Math.Floor(px);float fx=px-left,fy=py-(float)Math.Floor(py);
+  var key=Tuple.Create(text,color.ToArgb(),renderScaleX,height,fx,fy);DigitInk ink;
+  if(!desktopHanInk.TryGetValue(key,out ink)){
+   var source=Ink(text,hanFont,color);
+   int w=(int)Math.Ceiling(source.Width*renderScaleX/S)+2*pad+1;
+   int baseline=(int)Math.Ceiling(source.Height*sy/S)+pad,h=baseline+pad+1;
+   using(var high=new Bitmap(w*S,h*S,PixelFormat.Format32bppPArgb)){
+    using(var g=Graphics.FromImage(high)){
+     g.ScaleTransform(renderScaleX*S,sy*S);g.SmoothingMode=SmoothingMode.AntiAlias;g.InterpolationMode=InterpolationMode.HighQualityBicubic;
+     Put(g,text,hanFont,color,(pad+fx)/renderScaleX,(baseline+fy)/sy);
+    }
+    var raster=ScaleInk(high,w,h);ink=new DigitInk{Image=raster,Foot=VisibleFoot(raster,160)};desktopHanInk.Add(key,ink);
+   }
+  }
+  digitQueue.Add(new DigitDraw{Ink=ink,X=left-pad,Y=(int)Math.Round(numberBottom*sy)-ink.Foot,Opacity=1,Clip=new Rectangle(0,0,width,height)});
+ }
  static Bitmap ScaleInk(Bitmap source,int w,int h){
   var image=new Bitmap(w,h,PixelFormat.Format32bppPArgb);
   using(var g=Graphics.FromImage(image)){g.CompositingMode=CompositingMode.SourceCopy;g.InterpolationMode=InterpolationMode.HighQualityBicubic;g.PixelOffsetMode=PixelOffsetMode.HighQuality;g.DrawImage(source,new Rectangle(0,0,w,h),0,0,source.Width,source.Height,GraphicsUnit.Pixel);}
   return image;
  }
- static int VisibleFoot(Bitmap image){
+ static int VisibleFoot(Bitmap image,int threshold=100){
   int foot=0,faint=0;
-  for(int y=0;y<image.Height;y++)for(int x=0;x<image.Width;x++){int alpha=image.GetPixel(x,y).A;if(alpha>0)faint=y+1;if(alpha>100)foot=y+1;}
+  for(int y=0;y<image.Height;y++)for(int x=0;x<image.Width;x++){int alpha=image.GetPixel(x,y).A;if(alpha>0)faint=y+1;if(alpha>threshold)foot=y+1;}
   return foot>0?foot:Math.Max(1,faint);
  }
  static DigitInk RestInk(Bitmap image,int foot,int offset=0){
@@ -365,6 +388,7 @@ internal sealed class TaskbarPainter:IDisposable {
   int slots=modules.Length,cols=slots/2;renderScaleX=scale;digitQueue.Clear();
   if(digitInk.Count>=384){foreach(var item in digitInk.Values)item.Image.Dispose();digitInk.Clear();}
   if(unitInk.Count>=96){foreach(var item in unitInk.Values)item.Image.Dispose();unitInk.Clear();}
+  if(desktopHanInk.Count>=192){foreach(var item in desktopHanInk.Values)item.Image.Dispose();desktopHanInk.Clear();}
   // At 200% the 2x intermediate still supplies four samples per logical pixel.
   int supersample=frame!=null&&scale>=1.75f?2:S;
   using(var high=new Bitmap(width*supersample,height*supersample,PixelFormat.Format32bppPArgb)){
@@ -393,7 +417,13 @@ internal sealed class TaskbarPainter:IDisposable {
      float opticalCenter=problem?top+ProblemCenter(options,id,omitUnit?"":display.Unit)+options.Offset(id,"label"):bottom-4;
      if(label=="↑"||label=="↓"){float sign=label=="↑"?-1:1,arrowY=opticalCenter,tip=arrowY+sign*4;using(var pen=new Pen(nameInk,1.2f)){pen.StartCap=pen.EndCap=LineCap.Round;g.DrawLine(pen,labelX+3.5f,arrowY-sign*4,labelX+3.5f,tip);g.DrawLines(pen,new[]{new PointF(labelX+.75f,tip-sign*2.75f),new PointF(labelX+3.5f,tip),new PointF(labelX+6.25f,tip-sign*2.75f)});}}
      else if(label=="◇")DrawMetricIcon(g,id,labelX,problem?opticalCenter-5.25f:bottom-10,nameInk);
-     else {var font=IsAscii(label)?labelFont:hanFont;Put(g,label,font,nameInk,labelX,problem?LabelBottom(label,font,nameInk,opticalCenter):bottom);}
+     else {
+      var font=IsAscii(label)?labelFont:hanFont;
+      float nameBottom=problem?LabelBottom(label,font,nameInk,opticalCenter):bottom;
+      if(desktopOrigins!=null&&parts.Contains("number")&&HasHan(label)&&cell.Text.Any(ch=>ch>='0'&&ch<='9'))
+       DesktopHan(label,nameInk,labelX,nameBottom,numberBottom+options.Offset(id,"label"));
+      else Put(g,label,font,nameInk,labelX,nameBottom);
+     }
      if(!parts.Contains("number"))continue;
      string text=cell.Text,prior=FitNumber(priorDisplay,cell.NumberTrack);float advance=NumberWidth(text),cx=x+cell.NumberX+cell.NumberTrack-advance;
      int valueShift=valueShifts==null?0:valueShifts[col];
@@ -530,5 +560,5 @@ internal sealed class TaskbarPainter:IDisposable {
  }
  internal static void Layer(Graphics g,Bitmap image,float x,double alpha){if(image==null||alpha<=0)return;using(var attributes=new ImageAttributes()){var matrix=new ColorMatrix();matrix.Matrix33=(float)Math.Min(1,alpha);attributes.SetColorMatrix(matrix);g.DrawImage(image,new Rectangle((int)Math.Round(x),0,image.Width,image.Height),0,0,image.Width,image.Height,GraphicsUnit.Pixel,attributes);}}
  static bool IsAscii(string text){foreach(char c in text)if(c>127)return false;return true;}
- public void Dispose(){foreach(var value in digitInk.Values)value.Image.Dispose();digitInk.Clear();foreach(var item in unitInk.Values)item.Image.Dispose();unitInk.Clear();foreach(var b in glyphs.Values)b.Dispose();glyphs.Clear();labelFont.Dispose();valueFont.Dispose();hanFont.Dispose();unitFont.Dispose();latin.Dispose();medium.Dispose();han.Dispose();}
+ public void Dispose(){foreach(var item in desktopHanInk.Values)item.Image.Dispose();desktopHanInk.Clear();foreach(var value in digitInk.Values)value.Image.Dispose();digitInk.Clear();foreach(var item in unitInk.Values)item.Image.Dispose();unitInk.Clear();foreach(var b in glyphs.Values)b.Dispose();glyphs.Clear();labelFont.Dispose();valueFont.Dispose();hanFont.Dispose();unitFont.Dispose();latin.Dispose();medium.Dispose();han.Dispose();}
 }

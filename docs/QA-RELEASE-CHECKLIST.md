@@ -8,6 +8,8 @@
 
 入口：同目录树的 `tests/peek-desktop-smoke.mjs`、`tests/peek-preview-clarity.mjs`、`tests/PeekDesktopLayoutProbe.cs`、`tests/peek-desktop-layout-pixels.mjs`、`tests/PeekTaskbarSqueezeProbe.cs`。原生压缩夹具使用确定的可用宽度序列，不代替真实应用按钮占位测试。
 
+桌面中文底边：用窗口夹具 PeekDesktopLayoutProbe.cs 和 peek-desktop-han-pixels.mjs 检查浅深色的「内存 89%」「已用 13.9 G」，同时验证西文、缺测、字号、横向位置及数值和单位保持原样。
+
 ## 正式版更新回归
 
 - 用旧版本和不同版本的实际打包 EXE，在隔离目录验证「检查更新」原位切换为「安装并重启」：只有一个更新按钮，轮廓、大小与位置不变，浅深色均不裁切。下方不增加下载或安装按钮。

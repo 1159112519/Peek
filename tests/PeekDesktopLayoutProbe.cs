@@ -28,6 +28,8 @@ public sealed class PeekDesktopLayoutProbe {
  static void Run(string payload,string output){
   var a=Assembly.LoadFrom(Path.Combine(payload,"AsterHubWidgets.exe"));
   foreach(bool dark in new[]{false,true}){
+   Capture(a,output,dark,"han",new[]{"cpu","memory","gpu",null,null,null,null,null,null},new[]{"CPU","内存","显卡"},new[]{"%","%","%"},new double?[]{63,89,null},new[]{0,0,0},1);
+   Capture(a,output,dark,"han-used",new[]{"cpu","memoryUsed","gpu",null,null,null,null,null,null},new[]{"CPU","已用","显卡"},new[]{"%","GB","%"},new double?[]{63,13.9,null},new[]{0,1,0},1);
    Capture(a,output,dark,"columns",new[]{"cpu","memoryUsed","gpu","down","memory","up","ping","gpuPower","loss"},new[]{"CPU","RAM","GPU","↓","RAM","↑","Ping","PWR","Loss"},new[]{"%","GB","%","K/s","%","K/s","ms","W","%"},new double?[]{79,12.8,0,169,89,4,23,5,0},new[]{0,1,0,0,0,1,0,0,0},3);
    Capture(a,output,dark,"align",new[]{"memoryUsed","cpu","gpu","down","gpuMemory","storageRead","up","cpuFrequency","storageWrite"},new[]{"RAM","CPU","GPU","↓","VRAM","R","↑","CPU","W"},new[]{"GB","%","%","K/s","%","K/s","K/s","GHz","M/s"},new double?[]{13.7,24,0,160.5,8,230,9.9,4.7,1.1},new[]{1,0,0,1,0,0,1,1,1},3);
    Capture(a,output,dark,"digits",new[]{"cpu","memoryUsed","gpu","down","memory","up",null,null,null},new[]{"CPU","RAM","GPU","↓","RAM","↑"},new[]{"%","GB","%","K/s","%","K/s"},new double?[]{63,13.9,null,null,88,null},new[]{0,1,0,0,0,0},2);

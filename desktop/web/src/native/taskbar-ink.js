@@ -12,11 +12,11 @@ export function centerTaskbarInk(text,font,cx,cy){
  }
  return {x:cx+offset.x,y:cy+offset.y};
 }
-export function taskbarInkY(text,font,bottom,phase={x:0,y:0}){
+export function taskbarInkY(text,font,bottom,phase={x:0,y:0},threshold=128){
  if(!text||typeof document==='undefined'||!document.fonts.check(font))return bottom;
  const dpr=globalThis.devicePixelRatio||1,fx=((phase.x*dpr)%1+1)%1,fy=(((phase.y+bottom)*dpr)%1+1)%1;
- const key=[text,font,dpr,fx.toFixed(4),fy.toFixed(4)].join('|');let shift=cache.get(key);
- if(shift===undefined){canvas??=document.createElement('canvas');const width=Math.ceil((text.length*16+20)*dpr),height=Math.ceil(40*dpr);canvas.width=width;canvas.height=height;const c=canvas.getContext('2d',{willReadFrequently:true});c.setTransform(dpr,0,0,dpr,0,0);c.font=font;c.fillStyle='#fff';c.textBaseline='alphabetic';const base=Math.ceil(24*dpr);c.fillText(text,(4+fx)/dpr,(base+fy)/dpr);const data=c.getImageData(0,0,width,height).data;let last=-1;for(let y=height-1;y>=0&&last<0;y--)for(let x=0;x<width;x++)if(data[(y*width+x)*4+3]>=128){last=y;break;}shift=last<0?0:(base+Math.round(fy)-1-last)/dpr;if(cache.size>=768)cache.clear();cache.set(key,shift);}
+ const key=[text,font,dpr,fx.toFixed(4),fy.toFixed(4),threshold].join('|');let shift=cache.get(key);
+ if(shift===undefined){canvas??=document.createElement('canvas');const width=Math.ceil((text.length*16+20)*dpr),height=Math.ceil(40*dpr);canvas.width=width;canvas.height=height;const c=canvas.getContext('2d',{willReadFrequently:true});c.setTransform(dpr,0,0,dpr,0,0);c.font=font;c.fillStyle='#fff';c.textBaseline='alphabetic';const base=Math.ceil(24*dpr);c.fillText(text,(4+fx)/dpr,(base+fy)/dpr);const data=c.getImageData(0,0,width,height).data;let last=-1;for(let y=height-1;y>=0&&last<0;y--)for(let x=0;x<width;x++)if(data[(y*width+x)*4+3]>=threshold){last=y;break;}shift=last<0?0:(base+Math.round(fy)-1-last)/dpr;if(cache.size>=768)cache.clear();cache.set(key,shift);}
  return bottom+shift;
 }
 
