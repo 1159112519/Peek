@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="desktop/web/public/peek-icons/01.png" width="112" height="112" alt="Peek 默认应用图标">
+  <img src="docs/screenshots/peek-logo.png" width="112" height="112" alt="Peek 默认应用图标">
 </p>
 
 <h1 align="center">Peek</h1>
