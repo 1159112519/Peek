@@ -28,12 +28,10 @@
   <a href="docs/screenshots/taskbar-layouts.png"><img src="docs/screenshots/taskbar-layouts.png" width="800" alt="Peek 浅色任务栏小组件：并列对照一列、两列和三列，每列有两行读数"></a>
 </p>
 
-### 空间不足时自动收缩
-
-先缩小列间距，再从右侧逐列退出；空间腾出来后恢复原排列。
+### 任务栏空间变化
 
 <p align="center">
-  <img src="docs/screenshots/taskbar-squeeze.gif" width="800" alt="Peek 任务栏空间变化：三列收紧、减为两列和一列、隐藏，再逐列恢复">
+  <img src="docs/screenshots/taskbar-squeeze.gif" width="800" alt="任务栏空间变化动画">
 </p>
 
 ### 多页切换，按用途分组
