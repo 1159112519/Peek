@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {createServer} from 'node:net';
 import {createHash} from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 import assert from 'node:assert/strict';
 const require=createRequire(path.join(process.env.USERPROFILE,'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/package.json'));
@@ -11,6 +11,8 @@ const [oldExe,fixture,evidence,kind]=process.argv.slice(2).map((arg,i)=>i<3?path
 assert(['portable','installed','bad-hash'].includes(kind));
 const currentVersion=process.env.PEEK_TEST_FROM??'0.1.2',targetVersion=process.env.PEEK_TEST_TO??'0.1.3';
 const legacy=process.env.PEEK_TEST_LEGACY==='1';
+const online=process.env.PEEK_TEST_ONLINE==='1';
+assert(!online||kind==='portable','Public-channel test uses the isolated portable launcher');
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const hash=async file=>createHash('sha256').update(await fs.readFile(file)).digest('hex');
 const data=path.join(evidence,'data');const launcher=path.join(evidence,'Peek.exe');
@@ -18,11 +20,17 @@ await fs.mkdir(path.join(data,'Fixture'),{recursive:true});
 await fs.copyFile(oldExe,launcher);
 const original=await hash(launcher);
 const isInstaller=kind==='installed';
+if(isInstaller){
+ // Override directory does not isolate Inno's per-user uninstall key or shortcuts.
+ const sid=execFileSync('whoami.exe',['/user','/fo','csv','/nh'],{encoding:'utf8'}).match(/S-1-5-[\d-]+/)?.[0];
+ assert(sid&&sid===process.env.PEEK_TEST_DISPOSABLE_SID&&/^PeekInnoQA-[0-9a-f]{9}$/i.test(path.basename(process.env.USERPROFILE??'')),
+   'Run the Inno upgrade only under a verified disposable PeekInnoQA Windows account');
+}
 const assetName=isInstaller?`Peek-Setup-v${targetVersion}.exe`:'Peek.exe';
 const updateAsset=path.join(data,'Fixture',assetName);
 await fs.copyFile(path.join(fixture,assetName),updateAsset);
 // Install the version fixture immediately before the manual check, so startup cannot race the assertion.
-await fs.writeFile(path.join(data,'peek-update-package.test.txt'),`${isInstaller?'installed':'portable'}\n${kind==='bad-hash'?'0'.repeat(64):await hash(updateAsset)}\n`);
+if(!online)await fs.writeFile(path.join(data,'peek-update-package.test.txt'),`${isInstaller?'installed':'portable'}\n${kind==='bad-hash'?'0'.repeat(64):await hash(updateAsset)}\n`);
 const server=createServer();await new Promise((resolve,reject)=>server.once('error',reject).listen(0,'127.0.0.1',resolve));const {port}=server.address();await new Promise(resolve=>server.close(resolve));
 const child=spawn(launcher,['--smoke',data,'--debug-port',String(port)],{cwd:evidence,stdio:'ignore',windowsHide:true});
 let browser,p;
@@ -54,7 +62,7 @@ try{
  const before=await checkButton.boundingBox();assert(before);
  const beforeShape=await shape(checkButton);
  await screenshot('检查更新-浅色');
- await fs.writeFile(path.join(data,'peek-update.test.txt'),`302\n/1159112519/Peek/releases/tag/v${targetVersion}\n`);
+ if(!online)await fs.writeFile(path.join(data,'peek-update.test.txt'),`302\n/1159112519/Peek/releases/tag/v${targetVersion}\n`);
  await checkButton.click();await check('available');
  if(!legacy){
   const identity=p.locator('.widget-about-identity');
@@ -64,10 +72,15 @@ try{
   assert.equal(await checkButton.count(),0);
   assert.equal(await button('下载更新').count(),0);
   const after=await originalSlot.boundingBox();assert(after);
-  assert.deepEqual(after,before,"Keep the original check button bounds");
+  if(currentVersion==='0.1.2'){
+   // The published 0.1.2 expands the button around its right edge. Check its
+   // original behavior here; the candidate's fixed bounds have a separate UI gate.
+   assert(Math.abs((after.x+after.width)-(before.x+before.width))<1&&Math.abs(after.y-before.y)<1&&after.height===before.height);
+  }else assert.deepEqual(after,before,"Keep the original check button bounds");
   assert.deepEqual(await shape(originalSlot),beforeShape);
-  assert(await originalSlot.evaluate(node=>{
-   const label=node.querySelector('.widget-about-action-label'),range=document.createRange();
+  if(currentVersion!=='0.1.2')assert(await originalSlot.evaluate(node=>{
+   const label=node.querySelector('.widget-about-action-label')??Array.from(node.childNodes).find(n=>n.nodeType===Node.TEXT_NODE&&n.textContent.trim());
+   if(!label)return false;const range=document.createRange();
    range.selectNodeContents(label);
    const text=range.getBoundingClientRect(),box=node.getBoundingClientRect();
    return text.left>=box.left+8&&text.right<=box.right-8&&text.top>=box.top&&text.bottom<=box.bottom;
@@ -96,8 +109,13 @@ try{
   const updates=path.join(data,'Updates');const dirs=await fs.readdir(updates);assert.equal(dirs.length,1);
   const job=path.join(updates,dirs[0]);let completed='';for(let i=0;i<100&&!completed;i++){completed=await fs.readFile(path.join(job,'completed.txt'),'utf8').catch(()=>null);if(!completed)await wait(100);}
   assert.equal(completed,targetVersion,await fs.readFile(path.join(job,'error.txt'),'utf8').catch(()=>''));
-  assert.equal(await hash(launcher),await hash(path.join(fixture,'Peek.exe')));
-  if(isInstaller)assert.match(await fs.readFile(path.join(job,'install.log'),'utf8'),/installation process succeeded/i);
+  if(isInstaller){
+   const manifest=JSON.parse((await fs.readFile(path.join(fixture,'payload-manifest.json'),'utf8')).replace(/^\uFEFF/,''));
+   const host=manifest.files.find(f=>f.file==='PeekHost.exe');
+   assert(host&&manifest.version===targetVersion,'Expected version-specific Inno payload manifest');
+   assert.equal(await hash(launcher),host.sha256,'Installed executable matches the packaged host, not the portable loader');
+   assert.match(await fs.readFile(path.join(job,'install.log'),'utf8'),/installation process succeeded/i);
+  }else assert.equal(await hash(launcher),await hash(path.join(fixture,'Peek.exe')));
  }
  assert.deepEqual(pageErrors,[]);console.log(JSON.stringify({kind,verified:true,evidence}));
 }catch(e){if(p&&!p.isClosed())await screenshot('failure').catch(()=>{});throw e;}

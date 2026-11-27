@@ -3,6 +3,15 @@ $ErrorActionPreference='Stop'
 $env:PSModulePath=Join-Path $PSHOME 'Modules'
 Set-Location -LiteralPath $PSScriptRoot
 function Check($ok,$message){if(!$ok){throw $message}}
+function Stop-InstalledQaPeek {
+ if(!$custom){return}
+ $exePath=Join-Path $custom 'Peek.exe'
+ foreach($proc in (Get-Process -Name Peek -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $exePath})){
+  if($proc.HasExited){continue}
+  try{Stop-Process -InputObject $proc -Force -ErrorAction Stop}catch{if(!$proc.HasExited){throw}}
+  Check $proc.WaitForExit(5000) 'Temporary installed Peek did not exit'
+ }
+}
 function WaitProcess($process){if(!$process.WaitForExit(90000)){throw 'Process did not exit'};return $process.ExitCode}
 $install=$probe=$null
 $reg='HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B86A0A48-66C9-4C84-B53C-6BA90801F43F}_is1'
@@ -103,11 +112,7 @@ public static class PeekSetupCapture {
  for($i=0;$i -lt 80 -and !(Test-Path -LiteralPath (Join-Path $smoke 'widget-ready.json'));$i++){if($probe.HasExited){throw 'Installed Peek exited early'};Start-Sleep -Milliseconds 350}
  Check (Test-Path -LiteralPath (Join-Path $smoke 'widget-ready.json')) 'Installed Peek did not open'
  if(!$probe.CloseMainWindow() -or !$probe.WaitForExit(3000)){Stop-Process -Id $probe.Id -ErrorAction SilentlyContinue}
- $exePath=Join-Path $custom 'Peek.exe'
- foreach($proc in (Get-Process -Name Peek -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $exePath})){
-  Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-  Check $proc.WaitForExit(5000) 'Installed Peek was still running before uninstall'
- }
+ Stop-InstalledQaPeek
  $uninstall=Get-ChildItem -LiteralPath $custom -Filter 'unins*.exe' -File | Select-Object -First 1
  Check $uninstall 'Uninstaller was not created'
  $remove=Start-Process -FilePath $uninstall.FullName -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="'+(Join-Path $PSScriptRoot 'uninstall.log')+'"')) -WindowStyle Hidden -PassThru
@@ -118,5 +123,6 @@ public static class PeekSetupCapture {
 }catch{$_ | Out-String | Set-Content failure.txt -Encoding UTF8}finally{
  if($probe -and !$probe.HasExited){Stop-Process -Id $probe.Id -ErrorAction SilentlyContinue}
  if($install -and !$install.HasExited){Stop-Process -Id $install.Id -ErrorAction SilentlyContinue}
+ Stop-InstalledQaPeek
  Get-Process -Name 'Peek-ui-qa*' -ErrorAction SilentlyContinue | Where-Object {$_.Path -like "$env:TEMP\*"} | Stop-Process -ErrorAction SilentlyContinue
 }

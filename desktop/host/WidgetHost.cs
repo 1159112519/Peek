@@ -79,7 +79,7 @@ internal static class WidgetHost {
       var wait=ThreadPool.RegisterWaitForSingleObject(restore,delegate{if(!app.Dispatcher.HasShutdownStarted)app.Dispatcher.BeginInvoke(new Action(runtime.ShowSettings));},null,Timeout.Infinite,false);
       app.SessionEnding+=(s,e)=>runtime.Exit();
       try{
-       if(!background)app.Dispatcher.BeginInvoke(new Action(runtime.ShowSettings));else app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(runtime.PrepareSettings));
+       if(!background)app.Dispatcher.BeginInvoke(new Action(runtime.ShowSettings));
        if(updateTicket!=null)app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>{
         EventWaitHandle signal;if(EventWaitHandle.TryOpenExisting(PeekUpdateProtocol.EventName(updateTicket,"running"),out signal))using(signal)signal.Set();
        }));
@@ -239,7 +239,6 @@ internal sealed class WidgetRuntime:IDisposable {
   if(window==null){var created=new WidgetWindow(this,appearanceMode,appliedTheme,preferences.iconThemeId);window=created;created.Closed+=(s,e)=>{if(ReferenceEquals(window,created))window=null;};}
   return window;
  }
- internal void PrepareSettings(){if(!closing)SettingsWindow().Prepare();}
  internal void ShowSettings(){if(!closing)SettingsWindow().RequestOpen();}
  void SelectPage(string page,int revision){
   var old=preferences.taskbar;if(old.Revision!=revision||old.PageId(old.page)==page)return;
@@ -513,6 +512,8 @@ internal sealed class WidgetWindow:Window {
  readonly WidgetRuntime runtime;
  string mode,theme,icon;
  readonly WebView2 web=new WebView2();
+ // Keep quick reopen warm briefly; do not keep an entire Chromium tree forever.
+ readonly DispatcherTimer releaseTimer=new DispatcherTimer(DispatcherPriority.ApplicationIdle){Interval=TimeSpan.FromSeconds(20)};
  readonly JavaScriptSerializer json=ArchiveStore.Json();
  bool closed,documentReady,started,initialized,wantsOpen,revealed,cloaking,exiting,faulted;
  int epoch,verifyingEpoch=-1,presentations;
@@ -526,7 +527,7 @@ internal sealed class WidgetWindow:Window {
   Show();
  }
  internal void RequestOpen(){
-  if(closed)return;openRequestedAt=Stopwatch.GetTimestamp();wantsOpen=true;Prepare();PresentIfReady();
+  if(closed)return;releaseTimer.Stop();openRequestedAt=Stopwatch.GetTimestamp();wantsOpen=true;Prepare();PresentIfReady();
  }
  void PresentIfReady(){
   if(closed||!documentReady||!wantsOpen)return;
@@ -537,7 +538,7 @@ internal sealed class WidgetWindow:Window {
    revealed=true;
   }
   if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;
-  Activate();PublishVisibility();
+  Activate();WebViewMemoryPolicy.Set(web.CoreWebView2,true);PublishVisibility();
   lastPresentationMs=(long)((Stopwatch.GetTimestamp()-openRequestedAt)*1000.0/Stopwatch.Frequency);presentations++;
   DiagnosticsLog.Write("widget-settings-presented",null);
   if(WidgetHost.TestMode)WriteSmokeState("widget-ready.json");
@@ -562,6 +563,8 @@ internal sealed class WidgetWindow:Window {
   if(cloaking){PopupCloak.Set(hwnd,true);ShowInTaskbar=false;}
   else Hide();
   if(documentReady)ResetParkedDraft();else PublishVisibility();
+  WebViewMemoryPolicy.Set(web.CoreWebView2,false);
+  releaseTimer.Stop();releaseTimer.Start();
  }
  internal void ClosePermanently(){exiting=true;Close();}
  object SmokeState(){return new{pid=Process.GetCurrentProcess().Id,zoom=web.ZoomFactor,documentReady,visible=Presented,epoch,presentations,lastPresentationMs,windowState=WindowState.ToString(),cloaked=PopupCloak.Hidden(this,hwnd)};}
@@ -591,9 +594,10 @@ internal sealed class WidgetWindow:Window {
   web.ZoomFactor=SettingsZoom;Content=web;
 
   Loaded+=async (s,e)=>await Initialize();
-  StateChanged+=(s,e)=>{if(revealed&&documentReady)PublishVisibility();};
+  StateChanged+=(s,e)=>{if(revealed&&documentReady){WebViewMemoryPolicy.Set(web.CoreWebView2,Presented);PublishVisibility();}};
   Closing+=(s,e)=>{if(!exiting){e.Cancel=true;Dispatcher.BeginInvoke(new Action(Dismiss));}};
-  Closed+=(s,e)=>{closed=true;web.Dispose();};
+  releaseTimer.Tick+=(s,e)=>{releaseTimer.Stop();if(!wantsOpen&&!revealed)ClosePermanently();};
+  Closed+=(s,e)=>{closed=true;releaseTimer.Stop();web.Dispose();};
  }
  internal void ApplyTheme(string preference,string selected){
   mode=preference;theme=selected;var appearance=WidgetRuntime.AppearanceFor(selected);

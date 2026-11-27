@@ -37,14 +37,39 @@ internal static class TaskbarLocator {
   var info=new GuiThreadInfo{Size=(uint)Marshal.SizeOf(typeof(GuiThreadInfo))};
   return GetGUIThreadInfo(thread,ref info)&&(info.Flags&menuFlags)!=0;
  }
- // Win11 can host Explorer menus in a separate XAML popup window. Never treat
- // unrelated foreground windows as menu evidence or keep a stale shell HWND.
+ // The Win11 taskbar can show a separate XAML island without entering the
+ // Win32 menu loop. Match the Explorer process AND the current taskbar edge.
+ internal static bool IsAnchoredMenu(string kind,R shell,R popup,int gap){
+  if(kind!="#32768"&&kind!="Xaml_WindowedPopupClass"&&kind!="TopLevelWindowForOverflowXamlIsland")return false;
+  if(popup.W<=0||popup.H<=0||popup.Rt<=shell.L||popup.L>=shell.Rt)return false;
+  return (popup.T<shell.T&&Math.Abs(popup.B-shell.T)<=gap)||
+   (popup.B>shell.B&&Math.Abs(popup.T-shell.B)<=gap);
+ }
+ static bool ExplorerPopup(IntPtr window,uint explorer,R shell,int gap,string knownClass=null){
+  if(window==IntPtr.Zero||!IsWindowVisible(window))return false;
+  uint pid;R popup;
+  if(WindowProcess(window,out pid)==0||pid!=explorer||!GetWindowRect(window,out popup))return false;
+  if(knownClass==null){var kind=new System.Text.StringBuilder(64);GetClassName(window,kind,kind.Capacity);knownClass=kind.ToString();}
+  return IsAnchoredMenu(knownClass,shell,popup,gap);
+ }
+ static readonly string[] PopupClasses={"#32768","Xaml_WindowedPopupClass","TopLevelWindowForOverflowXamlIsland"};
  internal static bool MenuInteraction(IntPtr taskbar){
   if(ShellMenuOpen(taskbar))return true;
-  var foreground=GetForegroundWindow();if(foreground==IntPtr.Zero||foreground==taskbar)return false;
-  uint explorer,owner;if(WindowProcess(taskbar,out explorer)==0||WindowProcess(foreground,out owner)==0||owner!=explorer)return false;
-  var kind=new System.Text.StringBuilder(64);GetClassName(foreground,kind,kind.Capacity);
-  return kind.ToString()=="#32768"||kind.ToString()=="Xaml_WindowedPopupClass";
+  var foreground=GetForegroundWindow();uint explorer,active;R shell;
+  if(foreground==IntPtr.Zero||WindowProcess(taskbar,out explorer)==0||WindowProcess(foreground,out active)==0||
+     active!=explorer||!GetWindowRect(taskbar,out shell))return false;
+  int gap=(int)Math.Ceiling(28.0*Math.Max(96u,GetDpiForWindow(taskbar))/96d);
+  if(ExplorerPopup(foreground,explorer,shell,gap))return true;
+  // Some Explorer versions keep focus on Shell_TrayWnd while the island is open.
+  if(foreground!=taskbar)return false;
+  foreach(string kind in PopupClasses){
+   IntPtr popup=IntPtr.Zero;
+   for(int i=0;i<12;i++){
+    popup=FindWindowEx(IntPtr.Zero,popup,kind,null);if(popup==IntPtr.Zero)break;
+    if(ExplorerPopup(popup,explorer,shell,gap,kind))return true;
+   }
+  }
+  return false;
  }
  public sealed class Layout {public IntPtr Parent;public int X,Y,W,H;public float Scale;public int Available;public bool TemporaryEvidence,MenuOpen;public string Reason;public R Shell;public int Safe;public bool Valid{get{return Reason==null;}}}
  public static Layout Read(bool verbose,int slots=4){

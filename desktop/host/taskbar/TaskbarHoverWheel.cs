@@ -26,7 +26,13 @@ internal sealed class TaskbarHoverWheel:IDisposable {
   return false;
  }
  IntPtr OnMouse(int code,IntPtr message,IntPtr info){
-  int kind=message.ToInt32();if(code>=0&&(kind==0x020A||kind==0x0204||kind==0x0205)){
+  int kind=message.ToInt32();
+  // Never arm or consume another right click while the native menu is tracking.
+  if(code>=0&&PeekNativeMenu.InteractivePopupOpen&&(kind==0x0204||kind==0x0205)){
+   rightPressed=false;
+   return CallNextHookEx(hook,code,message,info);
+  }
+  if(code>=0&&(kind==0x020A||kind==0x0204||kind==0x0205)){
    var input=(MouseInfo)Marshal.PtrToStructure(info,typeof(MouseInfo));Rect r;bool over=false;
    if(IsWindowVisible(surface)&&GetWindowRect(surface,out r)&&input.point.X>=r.left&&input.point.X<r.right&&input.point.Y>=r.top&&input.point.Y<r.bottom){IntPtr hit=WindowFromPoint(input.point);over=(hit==surface||hit==parent||IsChild(parent,hit))&&(kind==0x020A||hits(input.point.X-r.left,input.point.Y-r.top));}
    if(RoutePointer(kind,(short)(input.data>>16),over))return (IntPtr)1;

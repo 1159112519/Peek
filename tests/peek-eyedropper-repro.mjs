@@ -20,6 +20,12 @@ try{
  for(let i=0;i<100&&!p;i++){if(child.exitCode!==null)throw Error('Peek exited early');if(!browser?.isConnected())try{browser=await chromium.connectOverCDP(`http://127.0.0.1:${port}`,{timeout:600})}catch{}p=browser?.contexts().flatMap(c=>c.pages()).find(page=>page.url().startsWith('https://asterhub.local'));if(!p)await wait(250);}
  assert(p); await p.locator('.widget-page:visible').waitFor({timeout:12000}); await p.evaluate(()=>document.fonts.ready);
  const result=await bridge('desktop.settings');assert.equal(result.appInfo.version,'0.1.3');({pid}=await bridge('widget.smoke.window-state'));
+ // CDP can see the hidden staging WebView before the WPF window is actually presented.
+ for(let i=0;i<80;i++){
+  const state=await bridge('widget.smoke.window-state');
+  if(state.visible&&state.windowState==='Normal'&&!state.cloaked)break;
+  assert(i<79,'Settings never reached the visible native window');await wait(100);
+ }
  const mode=process.argv.includes('--browser-baseline');
  if(!mode)execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',helper,'-PeekPid',String(pid),'-ActivateSettings','-RaiseOnly'],{windowsHide:true,stdio:'inherit'});
  await p.getByRole('tab',{name:'任务栏',exact:true}).click();await p.getByRole('tab',{name:'颜色',exact:true}).click();
@@ -50,8 +56,9 @@ try{
   const nativeInput=(action,hex='',x='0',y='0')=>execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',input,'-PeekPid',String(action==='Probe'?swatches.pid:pid),'-Action',action,'-Hex',hex||'#000000','-X',x,'-Y',y],{windowsHide:true,encoding:'utf8'}).trim();
   const open=async()=>{
    await p.waitForFunction(()=>document.querySelector('button[aria-label="屏幕取色"]')?.disabled===false,undefined,{timeout:6000});
-   const {x,y}=await pick.evaluate(el=>{const r=el.getBoundingClientRect();return {x:Math.round((r.x+r.width/2)*devicePixelRatio),y:Math.round((r.y+r.height/2)*devicePixelRatio)}});
-   nativeInput('Open','',String(x),String(y));
+   // Use the QA WebView to open the picker; physical title clicks
+   // can perturb window state and the picker on a desktop shared with Explorer.
+   await pick.click();
   };
   const sample=async requested=>{
 
@@ -60,12 +67,14 @@ try{
    await open();nativeInput('Click',screen,x,y); console.log(JSON.stringify({requested,screen,x,y}));
    return {requested,screen,x:Number(x),y:Number(y)};
   };
+  await open();nativeInput('Escape');
+  await p.waitForFunction(()=>document.querySelector('input[aria-label="HEX"]')?.value==='#FF0000');
   const green=await sample('#149571');
   await p.waitForFunction(v=>document.querySelector('input[aria-label="HEX"]')?.value===v,green.screen,{timeout:6000});
   await popup.getByRole('combobox',{name:'颜色格式'}).click();await p.getByRole('option',{name:'RGB',exact:true}).click();const blue=await sample('#A789E0'); assert.notEqual(blue.screen,green.screen);
   const rgb=blue.screen.slice(1).match(/../g).map(v=>parseInt(v,16)).join(', ');
   await p.waitForFunction(v=>document.querySelector('input[aria-label="RGB"]')?.value===v,rgb,{timeout:6000});
-  await open();nativeInput('Escape');await pick.waitFor({state:'visible'});
+  await pick.waitFor({state:'visible'});
   await p.waitForFunction(()=>document.querySelector('button[aria-label="屏幕取色"]')?.disabled===false,undefined,{timeout:6000});
   assert.equal(await popup.getByRole('textbox',{name:'RGB',exact:true}).inputValue(),rgb);
   await fs.writeFile(path.join(evidence,'screen-colors.json'),JSON.stringify({green,blue,rgb,escaped:true},null,2));
@@ -73,7 +82,7 @@ try{
   await p.getByRole('button',{name:'CPU 利用率 · 名称颜色',exact:true}).click();
   assert.equal(await popup.getByRole('textbox',{name:'HEX',exact:true}).inputValue(),blue.screen);
   await p.screenshot({path:path.join(evidence,'picked-and-applied.png')});
-  console.log('PASS: two actual screen clicks produced exact HEX / RGB; Esc did not overwrite color; accepted color persisted in the editor.');
+  console.log('PASS: two real screen pixels produced exact HEX / RGB; Esc did not overwrite color; accepted color persisted in the editor.');
  }
 }catch(error){
  if(p&&!p.isClosed()){

@@ -10,6 +10,8 @@ const {chromium}=require('playwright');
 const [exe,evidence]=process.argv.slice(2).map(arg=>path.resolve(arg));
 const helper=fileURLToPath(new URL('./peek-native-menu-capture.ps1',import.meta.url));
 const baseline=process.argv.includes('--baseline');
+const version=process.env.PEEK_TEST_VERSION??'0.1.3';
+const next=version.replace(/\d+$/,patch=>String(Number(patch)+1));
 await fs.mkdir(evidence,{recursive:true});
 const data=await fs.mkdtemp(path.join(evidence,'isolated-'));
 await fs.writeFile(path.join(data,'preferences.json'),JSON.stringify({language:'zh-CN',widgetAutoCheckUpdates:false,widgetTrayVisible:false,taskbar:{enabled:false},widgetMonitoring:{probeGateway:false},widgetDesktop:{enabled:false}}));
@@ -28,7 +30,7 @@ try{
  for(let i=0;i<100&&!p;i++){if(child.exitCode!==null)throw Error('Peek exited early');if(!browser?.isConnected())try{browser=await chromium.connectOverCDP(`http://127.0.0.1:${port}`,{timeout:600})}catch{}p=browser?.contexts().flatMap(c=>c.pages()).find(page=>page.url().startsWith('https://asterhub.local'));if(!p)await wait(250);}
  assert(p);p.setDefaultTimeout(6000);
  await p.locator('.widget-page:visible').waitFor({timeout:12000});
- const initial=await bridge('desktop.settings');assert.equal(initial.appInfo.version,'0.1.3');
+ const initial=await bridge('desktop.settings');assert.equal(initial.appInfo.version,version);
  for(const mode of baseline?['light']:['light','dark']){
   const pages=report[mode]={};
   await bridge('widget.appearance',{mode});await p.waitForFunction(m=>document.documentElement.dataset.appearanceMode===m,mode);await p.evaluate(()=>document.fonts.ready);
@@ -89,23 +91,23 @@ try{
    await p.getByRole('button',{name:new RegExp('^'+label)}).click();
    const dialog=p.getByRole('dialog',{name:label,exact:true});
    await dialog.waitFor();assert.equal(await dialog.locator('article').count(),count);
-   await dialog.getByText('v0.1.3',{exact:true}).waitFor();
+   await dialog.getByText('v'+version,{exact:true}).waitFor();
    await shot((count===1?'version-log-':'recent-')+mode);
    await p.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
   }
   await p.getByRole('button',{name:/^版本日志/}).click();
   assert.equal(await p.getByRole('dialog',{name:'版本日志',exact:true}).count(),0);
   let releaseUrl;for(let i=0;i<30&&!releaseUrl;i++){releaseUrl=await fs.readFile(path.join(data,'peek-open-version.test.txt'),'utf8').catch(()=>null);if(!releaseUrl)await wait(100);}
-  assert.equal(releaseUrl?.replace(/^\ufeff/,''),'https://github.com/1159112519/Peek/releases/tag/v0.1.3');
+  assert.equal(releaseUrl?.replace(/^\ufeff/,''),'https://github.com/1159112519/Peek/releases/tag/v'+version);
   await p.getByRole('button',{name:/^GitHub/}).click();
   let url;for(let i=0;i<30&&!url;i++){url=await fs.readFile(path.join(data,'peek-open-github.test.txt'),'utf8').catch(()=>null);if(!url)await wait(100);}
   assert.equal(url?.replace(/^\ufeff/,''),'https://github.com/1159112519/Peek');
   const g=await buttonGeometry();
   if(mode==='light'){
-   await fixture('0.1.3');await p.getByText('当前已是最新版本',{exact:true}).waitFor();
+   await fixture(version);await p.getByText('当前已是最新版本',{exact:true}).waitFor();
    await shot('about-light-current');
   }else{
-   await fixture('0.1.4');await p.getByRole('button',{name:'安装并重启',exact:true}).waitFor();
+   await fixture(next);await p.getByRole('button',{name:'安装并重启',exact:true}).waitFor();
    assert.deepEqual(await buttonGeometry(),g);
    await shot('about-dark-install');
   }
