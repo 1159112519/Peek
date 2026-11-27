@@ -6,11 +6,11 @@ $payload=(Resolve-Path (Join-Path $root 'app')).Path
 $manifest=Get-Content -LiteralPath (Join-Path $payload 'payload-manifest.json') -Raw | ConvertFrom-Json
 $version=(Get-Content -LiteralPath (Join-Path $root 'PEEK-VERSION') -Raw).Trim()
 if($version -notmatch '^\d+\.\d+\.\d+$' -or $manifest.version -ne $version){throw 'Unexpected Peek payload version'}
-$hostVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $payload 'AsterHubWidgets.exe'))
+$hostVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $payload 'PeekHost.exe'))
 if($hostVersion.ProductVersion -ne $version -or $hostVersion.ProductName -ne 'Peek'){throw 'Unexpected embedded Peek host metadata'}
 $entries=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach($item in $manifest.files){$entries.Add($item.file,$item)}
-if(-not $entries.ContainsKey('AsterHubWidgets.exe') -or $entries.ContainsKey('AsterHub.exe')){throw 'Unexpected executable identity'}
+if(-not $entries.ContainsKey('PeekHost.exe') -or $entries.ContainsKey('AsterHub.exe')){throw 'Unexpected executable identity'}
 $archive=Join-Path $PSScriptRoot ('portable.' + [guid]::NewGuid().ToString('N') + '.payload')
 $info=[IO.Compression.ZipFile]::Open($archive,[IO.Compression.ZipArchiveMode]::Create)
 try{
@@ -39,7 +39,7 @@ if(Test-Path -LiteralPath $OutputDirectory){throw 'Use a new output directory'}
 $dir=(New-Item -Path $OutputDirectory -ItemType Directory).FullName
 $exe=Join-Path $dir 'Peek.exe'
 $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-& $csc /nologo /target:winexe /platform:x64 /optimize+ '/r:System.IO.Compression.dll' '/r:System.Windows.Forms.dll' ('/win32manifest:'+(Join-Path $root 'host/AsterHub.manifest')) ('/win32icon:'+(Join-Path $root 'host/peek-icons/01/app.ico')) ('/resource:'+$archive+',WidgetPayload') ('/out:'+$exe) (Join-Path $PSScriptRoot 'widget-portable.cs') $meta
+& $csc /nologo /target:winexe /platform:x64 /optimize+ '/r:System.IO.Compression.dll' '/r:System.Windows.Forms.dll' ('/win32manifest:'+(Join-Path $root 'host/AsterHub.manifest')) ('/win32icon:'+(Join-Path $root 'host/peek-icons/01/app.ico')) ('/resource:'+$archive+',WidgetPayload') ('/out:'+$exe) (Join-Path $PSScriptRoot 'widget-portable.cs') (Join-Path $root 'updates/PeekDataRoot.cs') (Join-Path $root 'updates/PeekDataMove.cs') $meta
 if($LASTEXITCODE -ne 0){throw 'Portable EXE build failed'}
 Remove-Item -LiteralPath $archive,$meta
 Get-Item -LiteralPath $exe | Select-Object FullName,Length

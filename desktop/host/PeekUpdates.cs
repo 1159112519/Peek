@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Net;
 using System.Text.RegularExpressions;
 
@@ -11,9 +11,12 @@ internal sealed class PeekUpdateResult {
 }
 
 internal static class PeekUpdates {
- const string ReleasesPath="/1159112519/Peek/releases";
+ const string RepositoryPath="/1159112519/Peek";
+ const string ReleasesPath=RepositoryPath+"/releases";
+ internal const string RepositoryUrl="https://github.com"+RepositoryPath;
  internal const string ReleasesUrl="https://github.com"+ReleasesPath;
  static readonly Regex ReleaseTag=new Regex(@"\Av((?:0|[1-9][0-9]{0,9})\.(?:0|[1-9][0-9]{0,9})\.(?:0|[1-9][0-9]{0,9}))\z",RegexOptions.CultureInvariant);
+ internal static string CurrentReleaseUrl(string version){return ReleaseTag.IsMatch("v"+version)?ReleasesUrl+"/tag/v"+version:ReleasesUrl;}
  internal static PeekUpdateResult Interpret(Version current,int status,string location) {
   if(status==404)return new PeekUpdateResult("unpublished");
   if(status!=302||string.IsNullOrEmpty(location))return new PeekUpdateResult("error");

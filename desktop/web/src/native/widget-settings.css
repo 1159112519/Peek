@@ -1,6 +1,6 @@
 /* The standalone window: one content column, an editor work area, and persistent actions. */
 :root[data-widget-window=true],:root[data-widget-window=true] :is(body,#root){height:100%;min-height:0;overflow:clip}
-:root[data-widget-window=true]{--text-control:13px;--widget-page-title-text:19px;--widget-caption-text:12px;--select-trigger-height:28px;--select-trigger-padding-block:2px;--tool-navigation-text:var(--text-control);--widget-subheading-text:15px;--settings-round-corner:var(--radius-control);--settings-pill-corner:999px}
+:root[data-widget-window=true]{--text-control:13px;--widget-page-title-text:19px;--widget-caption-text:12px;--widget-library-text:12px;--select-trigger-height:28px;--select-trigger-padding-block:2px;--tool-navigation-text:var(--text-control);--widget-subheading-text:15px;--settings-round-corner:var(--radius-control);--settings-pill-corner:999px}
 :root[data-widget-window=true] body{background:var(--bg);margin:0}
 .widget-settings-window.native-preferences{
  --widget-inset:22px;--widget-content:632px;--widget-section-gap:19px;--widget-card-inset:18px;
@@ -89,7 +89,9 @@
 
 .widget-settings-window .widget-inline-check>input{inline-size:14px;block-size:14px}
 
-.widget-about-identity{display:flex;align-items:center;gap:12px;padding-block:15px}
+.widget-settings-window .widget-about{padding-block:15px 16px}
+.widget-about-identity{display:flex;align-items:center;gap:12px;padding-block-end:13px;border-block-end:1px solid var(--line-soft)}
+.widget-about-details{display:grid;gap:11px;padding-block-start:10px}
 /* Keep the existing check button's intrinsic size across action changes, including localized text. */
 .widget-about-identity>.widget-about-action{position:relative}
 .widget-about-action[data-alternate]>svg,.widget-about-action[data-alternate] .widget-about-action-reference{visibility:hidden}
@@ -103,7 +105,36 @@
 .widget-about-status>svg{flex:none;color:var(--muted)}
 .widget-about-status[data-state=current]>svg{color:var(--success,var(--green))}
 .widget-update-progress{display:block;width:100%;height:6px;accent-color:var(--muted);margin:2px 0 7px}
-.widget-about-auto{cursor:pointer}
+.widget-about-status[data-state=current]{color:var(--success,var(--green))}
+.widget-about-startup{min-inline-size:0}
+.widget-about-startup .widget-inline-check{margin:0;min-block-size:23px;gap:8px}
+.widget-about-startup .widget-inline-check>input{margin:0;flex:none}
+.widget-about-startup>p{margin:2px 0 0 22px;color:var(--muted);font-size:var(--widget-caption-text)}
+.widget-about-entries{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-block-start:2px}
+.widget-about-entry{
+ display:flex;align-items:center;gap:8px;min-width:0;min-block-size:58px;padding:7px 9px;text-align:start;
+ border:1px solid var(--line);border-radius:var(--settings-round-corner);background:transparent;color:var(--text);font:inherit;
+}
+.widget-about-entry:hover{background:var(--hover)}
+.widget-about-entry:focus-visible{outline:2px solid var(--muted);outline-offset:2px}
+.widget-about-entry>svg{flex:none;color:var(--muted)}
+.widget-about-entry>span{display:grid;gap:1px;min-width:0;overflow-wrap:anywhere}
+.widget-about-entry strong{font-weight:550}
+.widget-about-entry small{color:var(--muted);font-size:var(--widget-caption-text);line-height:1.35}
+.widget-about-details>.widget-group-note{margin:0}
+.peek-about-log.modal{width:min(500px,100%);display:flex;flex-direction:column;overflow:hidden;border-radius:var(--settings-round-corner);font:400 var(--text-control)/1.5 var(--font-interface)}
+.peek-about-log.modal>header{padding:11px 16px;flex:none}
+.peek-about-log.modal>header h2{margin:0;font-size:var(--widget-subheading-text)}
+.peek-about-log-scroll{padding:10px 16px 14px;overflow:auto;min-height:0;overscroll-behavior:contain}
+.peek-about-log-scroll article+article{margin-block-start:11px;padding-block-start:11px;border-block-start:1px solid var(--line-soft)}
+.peek-about-log-scroll article>header{display:flex;align-items:center;gap:10px}
+.peek-about-log-scroll time{color:var(--muted);font-size:var(--widget-caption-text);font-variant-numeric:tabular-nums}
+.peek-about-log-scroll ul{margin:5px 0 0;padding-inline-start:18px}
+.peek-about-log-scroll li+li{margin-block-start:4px}
+@media(max-width:400px){
+ .widget-about-entries{grid-template-columns:minmax(0,1fr)}
+ .widget-about-entry{min-block-size:46px}
+}
 .widget-desktop-fields{margin-block-start:10px}
 .widget-desktop-custom{display:grid;min-width:0}
 .widget-desktop-item{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,34%) minmax(30px,calc(10% - 8px));align-items:center;gap:8px;min-width:0;min-height:42px;border-top:1px solid var(--line-soft)}
@@ -193,7 +224,7 @@ html[data-appearance-mode=dark] .peek-desktop-preview{--peek-shell:37 37 39;--pe
 /* Only Peek settings controls grow. SVG readouts in the live stages retain their original fonts. */
 .widget-settings-window .tb42-editor :is(button,select){font-size:var(--text-control)}
 /* Taskbar and desktop are two editors for the same parameter library. */
-.widget-settings-window .tb42-categories .control-label{font-size:12px}
+.widget-settings-window .tb42-categories .control-label{font-size:var(--widget-library-text,12px)}
 .widget-settings-window .tb42-editor :is(.tb42-hint,.tb42-typography){font-size:var(--text-control)}
 .widget-settings-window .tb42-editor .tb42-tune-value{font-size:var(--text-control);line-height:15px}
 .widget-settings-window .tb42-tune-value small{font-size:10px;line-height:11px}
@@ -201,3 +232,11 @@ html[data-appearance-mode=dark] .peek-desktop-preview{--peek-shell:37 37 39;--pe
 /* These optically placed glyphs must match the Canvas ink measurement.
    Tabular alternates shift the narrow 1 into its neighbour. */
 .widget-settings-window [data-proportional-ink=true] .taskbar-cell-number text{font-variant-numeric:normal}
+
+/* Two equal tracks. Center the group, not the individual labels. */
+.widget-check-grid.widget-desktop-behavior{column-gap:clamp(18px,4vw,32px);grid-template-columns:repeat(2,minmax(0,1fr));padding:8px clamp(0px,2vw,14px)}
+.widget-check-grid.widget-desktop-behavior .native-setting-check{align-items:center}
+.widget-check-grid.widget-desktop-behavior .native-setting-check>input{margin-block-start:0}
+.widget-data-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.widget-data-status{padding-top:7px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+@media(max-width:490px){.widget-data-group>.widget-data-row{grid-template-columns:max-content minmax(0,1fr)}.widget-data-actions{grid-column:1/-1}}

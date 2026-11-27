@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -7,25 +7,25 @@ internal static class PeekUpdateWorker {
  static readonly TimeSpan PreflightTimeout=TimeSpan.FromSeconds(30),ExitTimeout=TimeSpan.FromSeconds(30),LaunchTimeout=TimeSpan.FromSeconds(50);
  static int Main(string[] args){
   PeekUpdateJob job=null;
-  bool approved=false,started=false;
+  bool approved=false,started=false,msiCommitted=false;
   string staged=null,backup=null;
   try{
    if(args.Length!=1)return 2;
    job=PeekUpdateJob.Load(args[0]);
-   string standard=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AsterHubWidgets");
+   string standard=job.Smoke?PeekDataRoot.Default:PeekDataRoot.Read();
    if(job.Smoke){
     string testFolder=Path.GetDirectoryName(job.DataRoot);
     if(string.IsNullOrEmpty(testFolder)||PeekUpdateProtocol.Same(job.DataRoot,standard)||!PeekUpdateProtocol.Same(Path.GetDirectoryName(job.Target),testFolder))throw new InvalidDataException("Invalid test target");
-   }else if(!PeekUpdateProtocol.Same(job.DataRoot,standard)||job.Installed!=PeekUpdateProtocol.InstalledAt(job.Target))throw new InvalidDataException("Invalid installation target");
+   }else if(!PeekUpdateProtocol.Same(job.DataRoot,standard)||job.Installed!=PeekUpdateProtocol.InstalledAt(job.Target)||job.Msi!=PeekUpdateProtocol.MsiInstalledAt(job.Target))throw new InvalidDataException("Invalid installation target");
    using(var ready=EventWaitHandle.OpenExisting(PeekUpdateProtocol.EventName(job.Id,"ready")))
    using(var go=EventWaitHandle.OpenExisting(PeekUpdateProtocol.EventName(job.Id,"go")))
    using(var running=new EventWaitHandle(false,EventResetMode.ManualReset,PeekUpdateProtocol.EventName(job.Id,"running")))
    using(var parent=Process.GetProcessById(job.ParentId)){
-    if(parent.StartTime.ToUniversalTime().Ticks!=job.ParentStart||!string.Equals(parent.ProcessName,"AsterHubWidgets",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Update owner changed");
+    if(parent.StartTime.ToUniversalTime().Ticks!=job.ParentStart||!PeekDataMove.IsHost(parent.ProcessName))throw new InvalidDataException("Update owner changed");
     PeekUpdateProtocol.VerifyVersion(job.Target,job.Current,false);
-    PeekUpdateProtocol.Verify(job.Payload,job.Size,job.Digest,job.Version,job.Installed);
+    PeekUpdateProtocol.Verify(job.Payload,job.Size,job.Digest,job.Version,job.Installed,job.Msi);
     backup=job.Target+".peek-backup-"+job.Id;
-    if(job.Installed)File.Copy(job.Target,backup,false);
+    if(job.Installed){if(!job.Msi)File.Copy(job.Target,backup,false);}
     else{staged=job.Target+".peek-new-"+job.Id;File.Copy(job.Payload,staged,false);PeekUpdateProtocol.Verify(staged,job.Size,job.Digest,job.Version,false);}
     ready.Set();
     if(!go.WaitOne(PreflightTimeout))return 3;
@@ -33,11 +33,16 @@ internal static class PeekUpdateWorker {
     approved=true;
     if(job.Installed){
      using(var lockPackage=File.OpenRead(job.Payload)){
-      PeekUpdateProtocol.Verify(job.Payload,job.Size,job.Digest,job.Version,true);
-      using(var setup=Process.Start(new ProcessStartInfo(job.Payload,PeekUpdateProtocol.InstallerArguments(Path.GetDirectoryName(job.Target),Path.Combine(job.Directory,"install.log"))){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=job.Directory})){
+      PeekUpdateProtocol.Verify(job.Payload,job.Size,job.Digest,job.Version,true,job.Msi);
+      string directory=Path.GetDirectoryName(job.Target),log=Path.Combine(job.Directory,"install.log");
+      string program=job.Msi?Path.Combine(Environment.SystemDirectory,"msiexec.exe"):job.Payload;
+      string arguments=job.Msi?PeekUpdateProtocol.MsiArguments(job.Payload,directory,log):PeekUpdateProtocol.InstallerArguments(directory,log);
+      using(var setup=Process.Start(new ProcessStartInfo(program,arguments){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=job.Directory})){
        if(setup==null)throw new IOException("无法启动更新安装程序。");
        setup.WaitForExit();
+       if(job.Msi&&setup.ExitCode==3010){msiCommitted=true;throw new IOException("新版已安装，Windows 要求先重启系统。Peek 不会自动重启系统。");}
        if(setup.ExitCode!=0)throw new IOException("安装程序未完成，退出码："+setup.ExitCode);
+       msiCommitted=job.Msi;
       }
      }
     }else File.Replace(staged,job.Target,backup,true);
@@ -54,7 +59,7 @@ internal static class PeekUpdateWorker {
     TryWrite(Path.Combine(job.Directory,"error.txt"),ex.ToString());
     if(approved){
      TryWrite(Path.Combine(job.DataRoot,PeekUpdateProtocol.FailureFile),ex.GetBaseException().Message);
-     if(!started)try{
+     if(!started&&!msiCommitted)try{
       if(File.Exists(backup)){
        if(File.Exists(job.Target))File.Replace(backup,job.Target,null,true);
        else File.Move(backup,job.Target);

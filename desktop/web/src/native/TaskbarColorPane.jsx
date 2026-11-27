@@ -1,12 +1,14 @@
 import {t,tr,useLocale} from '../i18n/index.js';
 import React,{useEffect,useLayoutEffect,useRef,useState,useId} from 'react';
 import {createPortal} from 'react-dom';
-import {RotateCcw} from 'lucide-react';
+import {RotateCcw, Pipette, Plus, X} from 'lucide-react';
 import {Button} from '../foundation/ui';
+import {ThemedSelect} from '../themed-select';
+import {native} from './bridge';
 import {useDismissableLayer} from '../foundation/overlay';
 import {contrast} from '../appearance/resolve-appearance';
 import {taskbarMetrics} from './taskbar-layout';
-import {parts,hex,fromHsv,toHsv} from './taskbar-colors.mjs';
+import {parts,hex,fromHsv,toHsv,fromRgb,toRgb} from './taskbar-colors.mjs';
 const labels=Object.fromEntries(taskbarMetrics.map(([id,label])=>[id,label]));
 const defaults={label:'var(--widget-value,var(--text))',reading:'var(--widget-value,var(--text))',graph:'var(--widget-accent,var(--green))'};
 const palettes={dark:['#F1F3F6','#8DBCF5','#67D4DC','#8DDF9F','#E4C471','#F3A997','#F5A9CB','#C7AFFB'],light:['#222731','#215DB1','#007580','#28754E','#845000','#A44027','#A13D6A','#6840B1']};
@@ -22,10 +24,25 @@ export function TaskbarColorPicker({target,original,preview,finish,reduced,previ
  const initial=original??target.fallback;
  const [state,setState]=useState({hsv:toHsv(initial),text:initial,value:original});
  const ref=useRef(null),anchor=useRef(target.anchor),entry=useRef(null),drag=useRef(null),id=useId();
- const [pos,setPos]=useState(null);
+ const [pos,setPos]=useState(null),[mode,setMode]=useState('HEX'),[swatches,setSwatches]=useState([]),[pickerError,setPickerError]=useState(''),[picking,setPicking]=useState(false);
+ const eyedrop=useRef(null);
+ const display=c=>mode==='RGB'?toRgb(c):c,parse=text=>mode==='RGB'?fromRgb(text):hex(text);
+ useEffect(()=>{let active=true;native.request('widget.colors.get').then(r=>{if(active&&Array.isArray(r))setSwatches(r)}).catch(()=>{});return()=>{active=false;eyedrop.current?.abort()}},[]);
+ async function store(next){try{setPickerError('');setSwatches(await native.request('widget.colors.set',{colors:next}));}catch{setPickerError('无法保存自定义颜色')}}
+ async function pick(){
+  if(eyedrop.current)return;
+  const controller=new AbortController();eyedrop.current=controller;setPickerError('');setPicking(true);
+  try{
+   const value=await native.request('widget.colors.pick',{},{timeout:65000,signal:controller.signal});
+   if(value&&!controller.signal.aborted){setState({hsv:toHsv(value),text:display(value),value});preview(value,true);}
+  }catch(e){if(!controller.signal.aborted)setPickerError('无法启动屏幕取色');}
+  finally{if(eyedrop.current===controller){eyedrop.current=null;if(!controller.signal.aborted)setPicking(false);}}
+ }
+ function format(next){if(next===mode)return;const current=state.value??initial;setMode(next);setState(s=>({...s,text:next==='RGB'?toRgb(current):current}));}
+
  const cancel=(focus=false)=>{finish(false);if(focus)anchor.current?.focus({preventScroll:true})};
  const accept=value=>{finish(true,value);anchor.current?.focus({preventScroll:true})};
- useDismissableLayer({refs:[anchor,ref],onDismiss:reason=>cancel(reason==='escape')});
+ useDismissableLayer({refs:[anchor,ref],onDismiss:reason=>{if(!eyedrop.current)cancel(reason==='escape')}});
  useLayoutEffect(()=>{
   const place=()=>{const el=ref.current,b=anchor.current?.getBoundingClientRect();if(!el||!b)return;
    const w=el.offsetWidth,h=el.offsetHeight,edge=8,gap=7;
@@ -45,11 +62,11 @@ export function TaskbarColorPicker({target,original,preview,finish,reduced,previ
   if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus({preventScroll:true});}
   if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus({preventScroll:true});}
  }
- function change(hsv,instant=false){const value=fromHsv(...hsv);setState({hsv,text:value,value});preview(value,instant)}
- function type(text){const value=hex(text);setState(s=>({...s,text,value:value??s.value,hsv:value?toHsv(value):s.hsv}));if(value)preview(value,false)}
+ function change(hsv,instant=false){const value=fromHsv(...hsv);setState({hsv,text:display(value),value});preview(value,instant)}
+ function type(text){const value=parse(text);setState(s=>({...s,text,value:value??s.value,hsv:value?toHsv(value):s.hsv}));if(value)preview(value,false)}
  function point(e){const r=e.currentTarget.getBoundingClientRect(),unit=n=>Math.min(1,Math.max(0,n));change([state.hsv[0],unit((e.clientX-r.left)/r.width),unit(1-(e.clientY-r.top)/r.height)],true)}
  function arrow(e){const dx={ArrowLeft:-1,ArrowRight:1}[e.key]??0,dy={ArrowDown:-1,ArrowUp:1}[e.key]??0;if(!dx&&!dy)return;e.preventDefault();const delta=e.shiftKey ? .1 : .02;change([state.hsv[0],Math.max(0,Math.min(1,state.hsv[1]+dx*delta)),Math.max(0,Math.min(1,state.hsv[2]+dy*delta))],true)}
- const [h,s,v]=state.hsv, invalid=!hex(state.text),color=hex(state.text)??initial;
+ const [h,s,v]=state.hsv, invalid=!parse(state.text),color=parse(state.text)??state.value??initial;
  const weak=state.value&&contrast(color,target.background)<(target.part==='graph'?3:4.5);
  const scheme=document.documentElement.dataset.appearanceMode==='light'?'light':'dark';
  return createPortal(<div ref={ref} id={id} className="tb-color-picker" onKeyDown={keepFocus} role="dialog" aria-label={tr(`${labels[target.metric]} · ${target.label}颜色`)} data-reduced={reduced} style={pos??{left:0,top:0,visibility:'hidden'}}>
@@ -57,9 +74,13 @@ export function TaskbarColorPicker({target,original,preview,finish,reduced,previ
   <div className="tb-color-sv" role="button" tabIndex={0} aria-label={t("饱和度与明度，方向键微调")} style={{'--hue':fromHsv(h,1,1)}} onKeyDown={arrow} onPointerDown={e=>{if(e.button!==0||!e.isPrimary)return;drag.current=e.pointerId;e.currentTarget.setPointerCapture(e.pointerId);point(e)}} onPointerMove={e=>{if(drag.current===e.pointerId)point(e)}} onLostPointerCapture={()=>{drag.current=null}}><i style={{left:`${s*100}%`,top:`${(1-v)*100}%`,background:color}}/></div>
   <input className="tb-color-hue" type="range" min="0" max="359" value={Math.round(h)%360} aria-label={t("色相")} onChange={e=>change([+e.target.value,s,v],true)}/>
   <div className="tb-color-presets" aria-label={t("推荐色板")}>{tr(palettes[scheme].map(c=><button type="button" key={c} title={tr(c)} aria-label={tr(`色板 ${c}`)} aria-pressed={state.value===c} style={{'--chip':c}} onClick={()=>change(toHsv(c))}/>))}</div>
-  <div className="tb-color-hex"><label htmlFor={id+'-hex'}>HEX</label><input id={id+'-hex'} ref={entry} value={state.text} aria-invalid={invalid} spellCheck={false} maxLength={8} onChange={e=>type(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!invalid){e.preventDefault();accept(state.value)}}}/><span style={{background:color}} aria-hidden="true"/></div>
-  <div className="tb-color-note" aria-live="polite">{tr(invalid?'请输入 6 位十六进制色值':weak?'与当前预览底色对比偏低':state.value?previewMessage:'当前使用默认颜色')}</div>
-  <footer><Button icon={RotateCcw} className="tb-color-default" disabled={state.value===null} onClick={()=>{setState({hsv:toHsv(target.fallback),text:target.fallback,value:null});preview(null,false)}}>{t("恢复默认")}</Button><Button onClick={()=>cancel(true)}>{t("取消")}</Button><Button tone="primary" className="tb-color-confirm" disabled={invalid} onClick={()=>accept(state.value)}>{t("确定")}</Button></footer>
+  <div className="tb-color-custom" role="group" aria-label={t('自定义颜色')}><span>{t('自定义')}</span><div className="tb-color-custom-slots">
+   {swatches.map(c=><span className="tb-color-custom-slot" key={c}><button type="button" className="tb-color-custom-swatch" title={c} aria-label={`${t('选用自定义颜色')} ${c}`} style={{'--chip':c}} onClick={()=>change(toHsv(c))}/><button type="button" className="tb-color-remove" aria-label={`${t('移除自定义颜色')} ${c}`} onClick={()=>store(swatches.filter(x=>x!==c))}><X size={9}/></button></span>)}
+   <button type="button" className="tb-color-square" aria-label={t('保存当前颜色')} title={t('保存当前颜色')} disabled={invalid||swatches.includes(color)} onClick={()=>store([color,...swatches].slice(0,8))}><Plus size={14}/></button>
+  </div></div>
+  <div className="tb-color-hex"><ThemedSelect className="tb-color-format" compact menuMinWidth={82} aria-label={t('颜色格式')} value={mode} disabled={picking} onChange={e=>format(e.target.value)}><option value="HEX">HEX</option><option value="RGB">RGB</option></ThemedSelect><input aria-label={mode} ref={entry} value={state.text} aria-invalid={invalid} spellCheck={false} maxLength={mode==='RGB'?17:8} onChange={e=>type(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!invalid){e.preventDefault();accept(state.value)}}}/><span className="tb-color-current" style={{background:color}} aria-hidden="true"/><button className="tb-color-square" type="button" aria-label={t('屏幕取色')} title={t('屏幕取色')} disabled={picking} onClick={pick}><Pipette size={15}/></button></div>
+  <div className="tb-color-note" aria-live="polite">{tr(pickerError||(invalid?(mode==='RGB'?'请输入 0–255 的 R、G、B，用逗号分隔':'请输入 6 位十六进制色值'):weak?'与当前预览底色对比偏低':state.value?previewMessage:'当前使用默认颜色'))}</div>
+  <footer><Button icon={RotateCcw, Pipette, Plus, X} className="tb-color-default" disabled={state.value===null} onClick={()=>{setState({hsv:toHsv(target.fallback),text:display(target.fallback),value:null});preview(null,false)}}>{t("恢复默认")}</Button><Button onClick={()=>cancel(true)}>{t("取消")}</Button><Button tone="primary" className="tb-color-confirm" disabled={invalid} onClick={()=>accept(state.value)}>{t("确定")}</Button></footer>
  </div>,document.body);
 }
 export function ColorPane({metrics,categoryIndex,navigation,selected,colorMap,previewMap,changeColor,previewColor,reduced}){useLocale();

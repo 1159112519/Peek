@@ -1791,5 +1791,12 @@
   "正在积累丢包样本": "Collecting samples for packet loss",
   "网关读数已过期": "The gateway readings have expired",
   "显卡驱动未提供风扇读数": "The graphics driver does not report fan speed",
-  "没有可用的 GPU 读数": "No GPU readings are available"
+  "没有可用的 GPU 读数": "No GPU readings are available",
+  "当前版本更新记录": "Current version notes",
+  "此版本没有随附的版本日志。": "No bundled notes for this version.",
+  "无法打开 Peek 的 GitHub 项目。": "Could not open the Peek project on GitHub.",
+  "在 GitHub 查看此版本": "View this release on GitHub",
+  "项目主页": "Project home",
+  "没有随附最近更新记录。": "No bundled recent changes.",
+  "无法打开 GitHub 页面。": "Could not open the GitHub page."
 }

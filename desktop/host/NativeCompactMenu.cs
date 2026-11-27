@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -52,7 +52,12 @@ internal static class NativeCompactMenu {
   internal bool VisuallyHidden{get{return PopupCloak.Hidden(window,handle);}}
   internal Menu(bool reusable){
    this.reusable=reusable;
-   window=new Window{Title="AsterHub menu",WindowStyle=WindowStyle.None,AllowsTransparency=false,ResizeMode=ResizeMode.NoResize,ShowInTaskbar=false,ShowActivated=false,Topmost=reusable,Width=204,Height=TrayHeight,Content=web,UseLayoutRounding=true,SnapsToDevicePixels=true};
+#if ASTERHUB_WIDGET
+   const string menuTitle="Peek 菜单";
+#else
+   const string menuTitle="AsterHub menu";
+#endif
+   window=new Window{Title=menuTitle,WindowStyle=WindowStyle.None,AllowsTransparency=false,ResizeMode=ResizeMode.NoResize,ShowInTaskbar=false,ShowActivated=false,Topmost=reusable,Width=204,Height=TrayHeight,Content=web,UseLayoutRounding=true,SnapsToDevicePixels=true};
    window.SourceInitialized+=delegate{handle=new WindowInteropHelper(window).Handle;int corners=2;try{DwmSetWindowAttribute(handle,33,ref corners,4);}catch(DllNotFoundException){}catch(EntryPointNotFoundException){}if(!PopupCloak.Set(handle,true))Park();};
    window.Tag=this;
    window.Closing+=delegate{closing=true;armed=false;};

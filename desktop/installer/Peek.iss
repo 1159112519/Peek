@@ -17,15 +17,15 @@ MinVersion=10.0.17763
 SetupMutex=Local\PeekSetup
 OutputDir={#InstallerOutputDir}
 OutputBaseFilename=Peek-Setup-v{#ReleaseVersion}
-SetupIconFile={#ProjectRoot}\host\peek-icons\01\app.ico
-UninstallDisplayIcon={app}\Peek.exe
+SetupIconFile={#SetupIcon}
+UninstallDisplayIcon={app}\resources\setup\PeekSetup.ico
 UninstallDisplayName=Peek v{#ReleaseVersion}
 WizardStyle=modern dynamic windows11 hidebevels
 WizardSizePercent=100,100
-WizardImageFile=
-WizardImageFileDynamicDark=
-WizardSmallImageFile={#ProjectRoot}\installer\assets\peek-wizard-mark.png
-WizardSmallImageFileDynamicDark={#ProjectRoot}\installer\assets\peek-wizard-mark.png
+WizardImageFile={#WizardAssets}\peek-*.png
+WizardImageFileDynamicDark={#WizardAssets}\peek-*.png
+WizardSmallImageFile={#WizardAssets}\peek-*.png
+WizardSmallImageFileDynamicDark={#WizardAssets}\peek-*.png
 DisableWelcomePage=yes
 ShowLanguageDialog=no
 DisableProgramGroupPage=yes
@@ -54,7 +54,10 @@ DialogFontSize=10
 chinesesimplified.SetupWindowTitle=Peek 安装
 chinesesimplified.FinishedHeadingLabel=Peek 已准备就绪
 chinesesimplified.FinishedLabel=安装已完成。
-chinesesimplified.SelectDirLabel3=选择 Peek 的安装位置。升级时将沿用原安装目录。
+chinesesimplified.SelectDirLabel3=安装目录
+chinesesimplified.SelectDirDesc=选择 Peek 的安装位置。
+english.SelectDirLabel3=Installation folder
+english.SelectDirDesc=Choose where to install Peek.
 chinesesimplified.ReadyLabel1=已准备好安装 Peek。
 chinesesimplified.InstallingLabel=正在安装 Peek，请稍候…
 english.SetupWindowTitle=Peek Setup
@@ -74,7 +77,8 @@ english.NoWebView=Microsoft Edge WebView2 Runtime is not installed. Check your c
 [Tasks]
 Name: "desktopicon"; Description: "{cm:DesktopShortcut}"; GroupDescription: "{cm:ShortcutGroup}"; Flags: unchecked
 [Files]
-Source: "{#PeekExe}"; DestDir: "{app}"; DestName: "Peek.exe"; Flags: ignoreversion
+Source: "{#InstalledPayload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SetupIcon}"; DestDir: "{app}\resources\setup"; DestName: "PeekSetup.ico"; Flags: ignoreversion
 Source: "{#Bootstrapper}"; DestName: "MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 [Icons]
 Name: "{group}\Peek"; Filename: "{app}\Peek.exe"; WorkingDir: "{app}"
@@ -87,10 +91,69 @@ const
  RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
  StartValue = 'AsterHubWidgets'; { Existing standalone Peek data/autorun compatibility. }
 
+procedure InitializeWizard;
+var Inset, MarkSize, TitleX, HeaderY, ButtonShift, FinishMarkSize, FinishTitleX: Integer;
+begin
+ Inset := WizardForm.InnerNotebook.Left;
+ MarkSize := ScaleX(40);
+ TitleX := Inset + MarkSize + ScaleX(12);
+ HeaderY := (WizardForm.MainPanel.ClientHeight - ScaleY(35)) div 2;
+ FinishMarkSize := ScaleX(96);
+ FinishTitleX := Inset + FinishMarkSize + ScaleX(28);
+ with WizardForm do begin
+  WizardSmallBitmapImage.Anchors := [akLeft, akTop];
+  WizardSmallBitmapImage.Stretch := True;
+  WizardSmallBitmapImage.SetBounds(Inset, (MainPanel.ClientHeight - MarkSize) div 2, MarkSize, MarkSize);
+  PageNameLabel.AutoSize := False;
+  PageNameLabel.Font.Size := 12;
+  PageNameLabel.SetBounds(TitleX, HeaderY, MainPanel.ClientWidth - TitleX - Inset, ScaleY(21));
+  PageDescriptionLabel.AutoSize := False;
+  PageDescriptionLabel.SetBounds(TitleX, HeaderY + ScaleY(21), MainPanel.ClientWidth - TitleX - Inset, ScaleY(22));
+
+  { Give the completion mark a left column with a comfortable text gutter. }
+  WizardBitmapImage2.Anchors := [akLeft, akTop];
+  WizardBitmapImage2.Stretch := True;
+  WizardBitmapImage2.SetBounds(Inset, ScaleY(40), FinishMarkSize, FinishMarkSize);
+  FinishedHeadingLabel.SetBounds(FinishTitleX, ScaleY(32), FinishedPage.ClientWidth - FinishTitleX - Inset, ScaleY(26));
+  FinishedLabel.Left := FinishTitleX;
+  FinishedLabel.Top := ScaleY(76);
+  FinishedLabel.Width := FinishedPage.ClientWidth - FinishTitleX - Inset;
+  YesRadio.Left := FinishTitleX;
+  NoRadio.Left := FinishTitleX;
+  RunList.Left := FinishTitleX;
+  RunList.Width := FinishedPage.ClientWidth - FinishTitleX - Inset;
+
+  SelectDirBitmapImage.Visible := False;
+  SelectDirBrowseLabel.Visible := False;
+  SelectDirLabel.Font.Style := [fsBold];
+  SelectDirLabel.SetBounds(0, ScaleY(13), SelectDirPage.ClientWidth, ScaleY(18));
+  DirEdit.SetBounds(0, ScaleY(36), DirEdit.Width, DirEdit.Height);
+  DirBrowseButton.Top := DirEdit.Top + (DirEdit.Height - DirBrowseButton.Height) div 2;
+  DiskSpaceLabel.Top := DirEdit.Top + DirEdit.Height + ScaleY(11);
+  DiskSpaceLabel.Anchors := [akLeft, akTop];
+
+  ButtonShift := Inset - (ClientWidth - CancelButton.Left - CancelButton.Width);
+  if ButtonShift > 0 then begin
+   CancelButton.Left := CancelButton.Left - ButtonShift;
+   NextButton.Left := NextButton.Left - ButtonShift;
+   BackButton.Left := BackButton.Left - ButtonShift;
+  end;
+ end;
+end;
+
 function ValidRuntime(RootKey: Integer): Boolean;
 var Version: String;
 begin
  Result := RegQueryStringValue(RootKey, EdgeKey, 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0');
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+ if CurPageID = wpFinished then begin
+  { Inno lays out the launch list again when it sets the final message. }
+  WizardForm.RunList.Top := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height + ScaleY(4);
+  WizardForm.RunList.Height := ScaleY(44);
+ end;
 end;
 
 function HasWebView: Boolean;

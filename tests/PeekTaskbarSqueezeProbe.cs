@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Drawing;
@@ -19,7 +19,7 @@ static class PeekTaskbarSqueezeProbe {
  static void Main(string[] args){
   string root=Path.GetFullPath(args[0]),outDir=Path.GetFullPath(args[1]);Directory.CreateDirectory(outDir);
   AppDomain.CurrentDomain.AssemblyResolve+=(s,e)=>{foreach(string dir in new[]{"runtime/managed","app/modules"}){string path=Path.Combine(root,dir,new AssemblyName(e.Name).Name+".dll");if(File.Exists(path))return Assembly.LoadFrom(path);}return null;};
-  var assembly=Assembly.LoadFrom(Path.Combine(root,"AsterHubWidgets.exe"));
+  var assembly=Assembly.LoadFrom(Path.Combine(root,File.Exists(Path.Combine(root,"PeekHost.exe"))?"PeekHost.exe":"Peek.exe"));
   var settings=Make(assembly,"TaskbarSettings");var sample=Make(assembly,"TaskbarSnapshot");
   string[] ids={"cpu","memory","gpu","down","gpuPower","up"},labels={"CPU","RAM","GPU","↓","PWR","↑"},units={"%","%","%","K/s","W","K/s"};double[] values={79,89,0,169,5,4};
   var slots=new object[6];

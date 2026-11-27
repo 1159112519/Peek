@@ -43,7 +43,7 @@ const screenshot=(name)=>p.screenshot({path:path.join(evidence,`${name}.png`),an
 const theme=async(name,dataset)=>{await button(name).click();await p.waitForFunction(mode=>document.documentElement.dataset.appearanceMode===mode,dataset);};
 try{
  p=await attach();p.on('pageerror',e=>pageErrors.push(e.message));
- await about();await p.locator('.widget-about-meta').getByText(`版本 v${currentVersion}`,{exact:true}).waitFor();await theme('浅色','light');
+ await about();await p.locator('.widget-about-meta').getByText(new RegExp(`^(?:版本 )?v${currentVersion.replaceAll(".","\\.")}$`)).waitFor();await theme('浅色','light');
  const auto=p.getByLabel('启动时自动检查更新');const oldAuto=await auto.isChecked();await auto.setChecked(!oldAuto);
  const apply=p.locator('.widget-settings-actions').getByRole('button',{name:'应用',exact:true});await apply.click();await p.getByRole('status').filter({hasText:'已应用'}).waitFor();
  const checkButton=button('检查更新');
@@ -90,7 +90,7 @@ try{
   for(let i=0;i<120&&child.exitCode===null;i++)await wait(250);
   assert.equal(child.exitCode,0,'old Peek did not exit cleanly');
   await browser.close().catch(()=>{});browser=null;p=null;
-  p=await attach();await about();await p.locator('.widget-about-meta').getByText(`版本 v${targetVersion}`,{exact:true}).waitFor();
+  p=await attach();await about();await p.locator('.widget-about-meta').getByText(new RegExp(`^(?:版本 )?v${targetVersion.replaceAll(".","\\.")}$`)).waitFor();
   assert.equal(await p.getByLabel('启动时自动检查更新').isChecked(),!oldAuto,'automatic check setting was not preserved');
   await p.waitForFunction(()=>document.documentElement.dataset.appearanceMode==='dark');await screenshot('重启后版本-深色');
   const updates=path.join(data,'Updates');const dirs=await fs.readdir(updates);assert.equal(dirs.length,1);

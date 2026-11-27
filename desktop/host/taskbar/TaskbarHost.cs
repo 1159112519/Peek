@@ -35,7 +35,7 @@ internal sealed class TaskbarController:IDisposable {
    TaskbarLocator.Layout proof;lock(probeGate){proof=pendingGeneration==probeGeneration?pending:null;pending=null;}
    if(proof!=null){
     bool sameShell=surface!=null&&last!=null&&proof.Parent==last.Parent&&proof.Shell.Equals(last.Shell);
-    bool hold=probeHold.Keep(tickNow,sameShell,proof.MenuOpen,proof.TemporaryEvidence);
+    bool hold=probeHold.Keep(tickNow,sameShell,proof.MenuOpen||(sameShell&&TaskbarLocator.MenuInteraction(last.Parent)),proof.TemporaryEvidence);
     if(proof.Valid&&owner.occupied!=null&&owner.occupied(proof.Parent)){Drop();owner.state="occupied";owner.reason="任务栏监测区域已被其他程序占用。";}
     else if(hold){nextProbe=Math.Min(nextProbe,tickNow+96);}
     else if(!proof.Valid&&proof.Reason.StartsWith("discovery:")&&surface!=null){owner.reason="任务栏布局探测稍后重试";}
@@ -77,8 +77,13 @@ internal sealed class TaskbarSurface:NativeWindow,IDisposable {
  void ResetPageGeometry(){squeezeLayout=painter==null||current==null?options.SqueezePage(page):painter.MeasurePage(current,options,page);paintedLayout=null;}
 
  internal TaskbarSurface(TaskbarLocator.Layout layout,TaskbarSettings options,int page,Action<int> flip,Action settings,Action restore,Action<string,string> detail=null,bool interactiveDetails=true,bool? reuseDetails=null){this.interactiveDetails=interactiveDetails;this.reuseDetails=reuseDetails??interactiveDetails;this.flip=flip;this.detail=detail;this.settings=settings;this.options=options;this.page=page;
-  IntPtr previousContext=TaskbarLocator.SetThreadDpiAwarenessContext(TaskbarLocator.GetWindowDpiAwarenessContext(layout.Parent));try{CreateHandle(new CreateParams{Caption="AsterHub Taskbar Monitor",Parent=layout.Parent,Style=0x44000000,ExStyle=0x08080000,X=layout.X,Y=layout.Y,Width=Math.Max(1,layout.W),Height=layout.H});}finally{TaskbarLocator.SetThreadDpiAwarenessContext(previousContext);}
-  if(GetParent(Handle)!=layout.Parent)throw new InvalidOperationException("任务栏父窗口校验失败");frames=new TaskbarFrameClock(Handle);hoverWheel=new TaskbarHoverWheel(Handle,layout.Parent);
+#if ASTERHUB_WIDGET
+  const string taskbarWindowName="Peek Taskbar Monitor";
+#else
+  const string taskbarWindowName="AsterHub Taskbar Monitor";
+#endif
+  IntPtr previousContext=TaskbarLocator.SetThreadDpiAwarenessContext(TaskbarLocator.GetWindowDpiAwarenessContext(layout.Parent));try{CreateHandle(new CreateParams{Caption=taskbarWindowName,Parent=layout.Parent,Style=0x44000000,ExStyle=0x08080000,X=layout.X,Y=layout.Y,Width=Math.Max(1,layout.W),Height=layout.H});}finally{TaskbarLocator.SetThreadDpiAwarenessContext(previousContext);}
+  if(GetParent(Handle)!=layout.Parent)throw new InvalidOperationException("任务栏父窗口校验失败");frames=new TaskbarFrameClock(Handle);hoverWheel=new TaskbarHoverWheel(Handle,layout.Parent,HitContextPoint);
   QueueDetailWarmup();
  }
  internal bool IsAttachedTo(IntPtr parent){return !disposed&&IsWindow(Handle)&&GetParent(Handle)==parent;}
@@ -189,6 +194,7 @@ internal sealed class TaskbarSurface:NativeWindow,IDisposable {
   float px=(short)(point.ToInt64()&65535)/dpiScale,py=(short)((point.ToInt64()>>16)&65535)*38f/h;
   return paintedLayout.Layout.Hit(paintedLayout,paintedShift,px,py,Room);
  }
+ bool HitContextPoint(int x,int y){var p=(IntPtr)((y<<16)|(x&65535));return HitSlot(p)>=0||HitPageIndicator(p);}
  bool HitPageIndicator(IntPtr point){
   if(paintedLayout==null||pageMotion||options.PageCount<2)return false;
   double alpha=RailProgress*paintedLayout.Alpha[0];if(alpha<.25)return false;
@@ -234,6 +240,10 @@ internal sealed class TaskbarSurface:NativeWindow,IDisposable {
 
  [DllImport("user32.dll")]static extern bool ClientToScreen(IntPtr h,ref PointN point);
  long lastContextRequest;
-  protected override void WndProc(ref Message m){if(m.Msg==TaskbarFrameClock.Message){try{if(!disposed)Frame();}finally{frames.Acknowledge();}return;}if(m.Msg==0x0200){if(!options.clickDetails)return;int at=HitSlot(m.LParam);if(at>=0&&hover<0){var track=new MouseTrack{size=(uint)Marshal.SizeOf(typeof(MouseTrack)),flags=2,window=Handle};TrackMouseEvent(ref track);}Hover(at);return;}if(m.Msg==0x02A3){Hover(-1);return;}if(m.Msg==0x21){m.Result=(IntPtr)3;return;}if(m.Msg==0x14){m.Result=(IntPtr)1;return;}if(m.Msg==0x020A||m.Msg==TaskbarHoverWheel.Message){wheel+=m.Msg==TaskbarHoverWheel.Message?m.WParam.ToInt32():(short)((m.WParam.ToInt64()>>16)&65535);int steps=wheel/120;if(steps!=0){wheel-=steps*120;ShowRail();flip(-steps);}return;}if(m.Msg==0x0204){lastContextRequest=0;m.Result=IntPtr.Zero;return;}if(m.Msg==0x0205||m.Msg==0x007B||m.Msg==TaskbarHoverWheel.ContextMessage){long now=Stopwatch.GetTimestamp();if(m.Msg!=0x007B||m.LParam.ToInt64()==-1||lastContextRequest==0||(now-lastContextRequest)/(double)Stopwatch.Frequency>.25){lastContextRequest=now;CloseDetail();settings();}m.Result=IntPtr.Zero;return;}if(m.Msg==0x0202){int at=HitSlot(m.LParam);if(at>=0){ShowDetail(at);return;}if(HitPageIndicator(m.LParam))flip(1);return;}base.WndProc(ref m);}
+  protected override void WndProc(ref Message m){if(m.Msg==TaskbarFrameClock.Message){try{if(!disposed)Frame();}finally{frames.Acknowledge();}return;}if(m.Msg==0x0200){if(!options.clickDetails)return;int at=HitSlot(m.LParam);if(at>=0&&hover<0){var track=new MouseTrack{size=(uint)Marshal.SizeOf(typeof(MouseTrack)),flags=2,window=Handle};TrackMouseEvent(ref track);}Hover(at);return;}if(m.Msg==0x02A3){Hover(-1);return;}if(m.Msg==0x21){m.Result=(IntPtr)3;return;}if(m.Msg==0x14){m.Result=(IntPtr)1;return;}if(m.Msg==0x020A||m.Msg==TaskbarHoverWheel.Message){wheel+=m.Msg==TaskbarHoverWheel.Message?m.WParam.ToInt32():(short)((m.WParam.ToInt64()>>16)&65535);int steps=wheel/120;if(steps!=0){wheel-=steps*120;ShowRail();flip(-steps);}return;}if(m.Msg==0x0204){lastContextRequest=0;m.Result=IntPtr.Zero;return;}if(m.Msg==0x0205||m.Msg==0x007B||m.Msg==TaskbarHoverWheel.ContextMessage){
+   if(m.Msg==0x0205&&!HitContextPoint((short)(m.LParam.ToInt64()&65535),(short)(m.LParam.ToInt64()>>16))){base.WndProc(ref m);return;}
+   TaskbarLocator.R rect;
+   if(m.Msg==0x007B&&m.LParam.ToInt64()!=-1&&TaskbarLocator.GetWindowRect(Handle,out rect)&&!HitContextPoint((short)(m.LParam.ToInt64()&65535)-rect.L,(short)(m.LParam.ToInt64()>>16)-rect.T)){base.WndProc(ref m);return;}
+   long now=Stopwatch.GetTimestamp();if(m.Msg!=0x007B||m.LParam.ToInt64()==-1||lastContextRequest==0||(now-lastContextRequest)/(double)Stopwatch.Frequency>.25){lastContextRequest=now;CloseDetail();settings();}m.Result=IntPtr.Zero;return;}if(m.Msg==0x0202){int at=HitSlot(m.LParam);if(at>=0){ShowDetail(at);return;}if(HitPageIndicator(m.LParam))flip(1);return;}base.WndProc(ref m);}
  public void Dispose(){if(disposed)return;disposed=true;CloseDetail();if(detailRenderer!=null){detailRenderer.Dispose();detailRenderer=null;}if(hoverWheel!=null)hoverWheel.Dispose();frames.Stop();frames.Dispose();ClearPages();if(painter!=null)painter.Dispose();if(Handle!=IntPtr.Zero&&IsWindow(Handle))DestroyHandle();}
 }

@@ -23,6 +23,9 @@ internal static class TaskbarLocator {
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window,IntPtr process);
  [DllImport("user32.dll")] static extern bool GetGUIThreadInfo(uint thread,ref GuiThreadInfo info);
+ [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll",EntryPoint="GetWindowThreadProcessId")]static extern uint WindowProcess(IntPtr window,out uint process);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetClassName(IntPtr window,System.Text.StringBuilder name,int capacity);
  [StructLayout(LayoutKind.Sequential)] struct GuiThreadInfo {
   public uint Size,Flags;
   public IntPtr Active,Focus,Capture,MenuOwner,MoveSize,Caret;
@@ -33,6 +36,15 @@ internal static class TaskbarLocator {
   uint thread=GetWindowThreadProcessId(taskbar,IntPtr.Zero);if(thread==0)return false;
   var info=new GuiThreadInfo{Size=(uint)Marshal.SizeOf(typeof(GuiThreadInfo))};
   return GetGUIThreadInfo(thread,ref info)&&(info.Flags&menuFlags)!=0;
+ }
+ // Win11 can host Explorer menus in a separate XAML popup window. Never treat
+ // unrelated foreground windows as menu evidence or keep a stale shell HWND.
+ internal static bool MenuInteraction(IntPtr taskbar){
+  if(ShellMenuOpen(taskbar))return true;
+  var foreground=GetForegroundWindow();if(foreground==IntPtr.Zero||foreground==taskbar)return false;
+  uint explorer,owner;if(WindowProcess(taskbar,out explorer)==0||WindowProcess(foreground,out owner)==0||owner!=explorer)return false;
+  var kind=new System.Text.StringBuilder(64);GetClassName(foreground,kind,kind.Capacity);
+  return kind.ToString()=="#32768"||kind.ToString()=="Xaml_WindowedPopupClass";
  }
  public sealed class Layout {public IntPtr Parent;public int X,Y,W,H;public float Scale;public int Available;public bool TemporaryEvidence,MenuOpen;public string Reason;public R Shell;public int Safe;public bool Valid{get{return Reason==null;}}}
  public static Layout Read(bool verbose,int slots=4){
@@ -45,13 +57,13 @@ internal static class TaskbarLocator {
   var h=Target(monitor); R r=new R(); var o=new Layout();o.Parent=h;
   if(h==IntPtr.Zero||!GetWindowRect(h,out r)||!IsWindowVisible(h)||r.W<500||r.H<25||r.H>130){o.Shell=r;o.Reason="unsupported, hidden or missing taskbar: hwnd="+h+" visible="+IsWindowVisible(h);return o;}o.Shell=r;
   var dpi=Math.Max(GetDpiForWindow(h),96u);var scale=dpi/96.0;int hh=(int)Math.Round(38*scale), inset=(int)Math.Round(8*scale);
-  if(ShellMenuOpen(h)){o.MenuOpen=true;o.Reason="Explorer menu active";return o;}
+  if(MenuInteraction(h)){o.MenuOpen=true;o.Reason="Explorer menu active";return o;}
   // Cache the properties in the same UIA query; don't make a cross-process call per button.
   var root=AutomationElement.FromHandle(h);var request=new CacheRequest{AutomationElementMode=AutomationElementMode.None};
   foreach(var property in new[]{AutomationElement.BoundingRectangleProperty,AutomationElement.IsOffscreenProperty,AutomationElement.AutomationIdProperty,AutomationElement.NameProperty})request.Add(property);
   AutomationElementCollection all;
   using(request.Activate())all=root.FindAll(TreeScope.Descendants,new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Button));
-  if(ShellMenuOpen(h)){o.MenuOpen=true;o.Reason="Explorer menu active";return o;}
+  if(MenuInteraction(h)){o.MenuOpen=true;o.Reason="Explorer menu active";return o;}
   int safe=int.MaxValue; bool start=false;
   foreach(AutomationElement e in all){var c=e.Cached;var b=c.BoundingRectangle;if(verbose)Console.WriteLine(c.AutomationId+" | "+c.Name+" | "+b+" | offscreen="+c.IsOffscreen);if(c.IsOffscreen||b.IsEmpty||b.Width<8||b.Width>r.W*.8||b.Right<=r.L||b.Left>=r.Rt||b.Bottom<=r.T||b.Top>=r.B)continue;
    if(c.AutomationId=="StartButton"||c.AutomationId=="Start"||c.Name=="Start"||c.Name=="开始")start=true;

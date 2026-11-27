@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -15,21 +15,22 @@ using System.Windows.Forms;
 [assembly: AssemblyInformationalVersion(PortableBundle.Version)]
 
 internal static class WidgetPortable {
-    const string Host = "AsterHubWidgets.exe";
+    const string Host = "PeekHost.exe";
     static readonly string Id = PortableBundle.Id;
 
     [STAThread]
     static int Main(string[] args) {
         bool background = args.Contains("--background");
         int smoke = Array.IndexOf(args, "--smoke");
+        if(args.Length>0&&args[0]=="--peek-move-data")return PeekDataMove.Run(args,Assembly.GetExecutingAssembly().Location);
         try {
             string launcher = Assembly.GetExecutingAssembly().Location;
             string root = smoke >= 0
                 ? Path.Combine(Path.GetFullPath(args[smoke + 1]), "PortableRuntime")
-                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AsterHubWidgets", "Runtime");
+                : PeekDataRoot.Runtime;
             Directory.CreateDirectory(root);
             string ready = Path.Combine(root, Id);
-            using (var mutex = new Mutex(false, @"Local\AsterHubWidgets-Extract-" + Id)) {
+            using (var mutex = new Mutex(false, @"Local\Peek-Extract-" + Id)) {
                 bool acquired;
                 try { acquired = mutex.WaitOne(TimeSpan.FromSeconds(45)); }
                 catch (AbandonedMutexException) { acquired = true; }

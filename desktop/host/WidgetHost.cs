@@ -40,9 +40,10 @@ internal static class WidgetHost {
   return false;
  }
  [STAThread] public static int Main(string[] args) {
+  if(args.Length>0&&args[0]=="--peek-move-data")return PeekDataMove.Run(args,Assembly.Location);
   bool background=false;string updateTicket=null;
   try {
-   WorkbenchHost.DataRoot=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AsterHubWidgets");
+   WorkbenchHost.DataRoot=PeekDataRoot.Default;
    for(int i=0;i<args.Length;i++) switch(args[i]) {
     case "--launcher":LauncherPath=Path.GetFullPath(args[++i]);break;
     case "--background":background=true;break;
@@ -52,12 +53,10 @@ internal static class WidgetHost {
     case "--debug-port":WorkbenchHost.DebugPort=int.Parse(args[++i]);break;
     default:throw new ArgumentException("Unknown startup option: "+args[i]);
    }
-   Directory.CreateDirectory(WorkbenchHost.DataRoot);
-   DiagnosticsLog.Configure(WorkbenchHost.DataRoot);
+   if(LauncherPath==null&&string.Equals(Path.GetFileName(Assembly.Location),"Peek.exe",StringComparison.OrdinalIgnoreCase))LauncherPath=Assembly.Location;
+   if(TestMode)Directory.CreateDirectory(WorkbenchHost.DataRoot);
    SetDllDirectory(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"runtime","win-x64"));
-   string instance;
-   using(var sha=System.Security.Cryptography.SHA256.Create())instance=BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(WorkbenchHost.DataRoot.ToUpperInvariant()))).Replace("-","").Substring(0,24);
-   var key=@"Local\AsterHubWidgets-"+instance;
+   var key=PeekDataRoot.LockKey(TestMode?WorkbenchHost.DataRoot:PeekDataRoot.Legacy);
    bool first;
    string restoreKey=key+"-restore-"+build;
    using(var mutex=new Mutex(true,key,out first)) {
@@ -69,6 +68,11 @@ internal static class WidgetHost {
      return 2;
     }
     try {
+     if(!TestMode){
+      try{WorkbenchHost.DataRoot=PeekDataRoot.LegacyStartup();}
+      catch(Exception ex){if(File.Exists(PeekDataRoot.Locator)||!Directory.Exists(PeekDataRoot.Legacy))throw;WorkbenchHost.DataRoot=PeekDataRoot.Legacy;PeekDataRoot.Report("未能迁移旧数据："+ex.Message);}
+     }
+     Directory.CreateDirectory(WorkbenchHost.DataRoot);DiagnosticsLog.Configure(WorkbenchHost.DataRoot);
      using(var restore=new EventWaitHandle(false,EventResetMode.AutoReset,restoreKey)) {
      var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};
      using(var runtime=new WidgetRuntime(app)) {
@@ -136,7 +140,7 @@ internal sealed class WidgetRuntime:IDisposable {
  readonly TaskbarController taskbar;
  readonly System.Windows.Forms.NotifyIcon tray;
  System.Drawing.Icon trayIcon;
- NativeCompactMenu.Menu menu;
+ readonly PeekNativeMenu menu=new PeekNativeMenu();
  WidgetWindow window;
  WidgetDesktopWindow desktopWindow;
  volatile DesktopPreferences preferences;
@@ -170,15 +174,17 @@ internal sealed class WidgetRuntime:IDisposable {
   }
   ScheduleUpdates();
   tray.MouseUp+=(s,e)=>{if(e.Button==System.Windows.Forms.MouseButtons.Left)Dispatch(ShowSettings);else if(e.Button==System.Windows.Forms.MouseButtons.Right)Dispatch(()=>ShowMenu(false));};
-  app.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{if(!closing&&menu==null)WarmMenu();}));
   SystemEvents.UserPreferenceChanged += OnSystemPreferenceChanged;
   DiagnosticsLog.Write("widget-runtime-ready",null);
  }
  bool Occupied(IntPtr parent){
-  IntPtr child=IntPtr.Zero;
-  for(int i=0;i<16;i++){
-   child=FindWindowEx(parent,child,null,"AsterHub Taskbar Monitor");if(child==IntPtr.Zero)return false;
-   uint other;GetWindowThreadProcessId(child,out other);if(other!=0&&other!=pid)return true;
+  // Recognize earlier Peek builds and the new window without exposing the old name.
+  foreach(string caption in new[]{"Peek Taskbar Monitor","AsterHub Taskbar Monitor"}){
+   IntPtr child=IntPtr.Zero;
+   for(int i=0;i<16;i++){
+    child=FindWindowEx(parent,child,null,caption);if(child==IntPtr.Zero)break;
+    uint other;GetWindowThreadProcessId(child,out other);if(other!=0&&other!=pid)return true;
+   }
   }
   return false;
  }
@@ -209,20 +215,25 @@ internal sealed class WidgetRuntime:IDisposable {
   appearanceMode=next;RefreshAppearance(true);return next;
  }
  internal void SmokeSystemAppearance(){if(!WidgetHost.TestMode)throw new InvalidOperationException("Unsupported command");OnSystemPreferenceChanged(null,null);}
- void WarmMenu(){try{menu=NativeCompactMenu.Prepare();}catch(Exception e){DiagnosticsLog.Write("widget-menu-warmup",e);}}
  void ShowMenu(bool fromTaskbar,bool fromDesktop=false){
-  if(menu==null)WarmMenu();if(menu==null)return;
-  var items=new List<NativeCompactMenu.Entry>();
-  if(fromDesktop)items.Add(new NativeCompactMenu.Entry("\uE711","隐藏监测",ToggleDesktop));
+  if(closing||menu.IsOpen)return;
+  var entries=new List<PeekNativeMenu.Entry>();
+  Action<string,Action> add=(label,run)=>entries.Add(new PeekNativeMenu.Entry(label,run));
+  if(fromDesktop)add("隐藏监测",ToggleDesktop);
   else{
-   items.Add(new NativeCompactMenu.Entry(preferences.taskbar.enabled?"\uE711":"\uE7F4",preferences.taskbar.enabled?"隐藏监测":"显示监测",ToggleDisplay));
-   if(!fromTaskbar)items.Add(new NativeCompactMenu.Entry("\uE7F4",preferences.widgetDesktop.enabled?"隐藏桌面监测":"显示桌面监测",ToggleDesktop));
-   if(fromTaskbar&&preferences.taskbar.PageCount>1){items.Add(new NativeCompactMenu.Entry("\uE76B","上一页",()=>taskbar.FlipPage(-1)));items.Add(new NativeCompactMenu.Entry("\uE76C","下一页",()=>taskbar.FlipPage(1)));}
+   add(preferences.taskbar.enabled?"隐藏监测":"显示监测",ToggleDisplay);
+   if(!fromTaskbar)add(preferences.widgetDesktop.enabled?"隐藏桌面监测":"显示桌面监测",ToggleDesktop);
+   if(fromTaskbar&&preferences.taskbar.PageCount>1){add("上一页",()=>taskbar.FlipPage(-1));add("下一页",()=>taskbar.FlipPage(1));}
   }
-  items.Add(new NativeCompactMenu.Entry("\uE713","Peek 设置",ShowSettings));
-  items.Add(null);
-  items.Add(new NativeCompactMenu.Entry("\uE8AC","退出 Peek",Exit));
-  menu.Open(appliedTheme,items,null,true);
+  add("Peek 设置",ShowSettings);
+  entries.Add(null); // Native separator
+  add("退出 Peek",Exit);
+  var action=menu.Show(entries,!fromDesktop);
+  if(action!=null&&!closing)action();
+ }
+ internal void SmokeMenu(string surface){
+  if(!WidgetHost.TestMode)throw new InvalidOperationException("Unsupported command");
+  Dispatch(()=>ShowMenu(surface=="taskbar",surface=="desktop"));
  }
  WidgetWindow SettingsWindow(){
   if(window==null){var created=new WidgetWindow(this,appearanceMode,appliedTheme,preferences.iconThemeId);window=created;created.Closed+=(s,e)=>{if(ReferenceEquals(window,created))window=null;};}
@@ -392,12 +403,18 @@ internal sealed class WidgetRuntime:IDisposable {
   }catch(Exception ex){DiagnosticsLog.Write("peek-update-apply",ex);if(!closing)PublishUpdate(new PeekUpdateResult("applyError",version,detail:ex is InvalidDataException||ex is IOException?ex.Message:null));}
   finally{updateInstalling=false;preparedUpdate=null;}
  }
- internal void OpenReleasePage(){
-  if(WidgetHost.TestMode){File.WriteAllText(Path.Combine(WorkbenchHost.SmokeRoot,"peek-open-releases.test.txt"),PeekUpdates.ReleasesUrl);return;}
-  using(var process=Process.Start(new ProcessStartInfo{FileName=PeekUpdates.ReleasesUrl,UseShellExecute=true})){}
+ internal void OpenPeekPage(string page){
+  string url,fixture;
+  switch(page){
+   case "repository":url=PeekUpdates.RepositoryUrl;fixture="peek-open-github.test.txt";break;
+   case "version":url=PeekUpdates.CurrentReleaseUrl(WidgetHost.VersionText);fixture="peek-open-version.test.txt";break;
+   default:url=PeekUpdates.ReleasesUrl;fixture="peek-open-releases.test.txt";break;
+  }
+  if(WidgetHost.TestMode){File.WriteAllText(Path.Combine(WorkbenchHost.SmokeRoot,fixture),url);return;}
+  using(var process=Process.Start(new ProcessStartInfo{FileName=url,UseShellExecute=true})){}
  }
  internal object Status(){return new{host=taskbar.Status(),snapshot=Snapshot(),systemTheme=BrandIcons.SystemLight()?"light":"dark"};}
- internal object Options(){return new{appInfo=WidgetHost.AppInfo(),taskbar=preferences.taskbar,startup=startup.Enabled,startupNeedsRepair=!startup.Enabled&&!string.IsNullOrWhiteSpace(startup.Registration),trayVisible=preferences.widgetTrayVisible,autoCheckUpdates=preferences.widgetAutoCheckUpdates,iconThemeId=preferences.iconThemeId,language=preferences.language,dataPath=WorkbenchHost.DataRoot,localIntervalMs=preferences.localIntervalMs,monitoring=preferences.widgetMonitoring,desktop=preferences.widgetDesktop};}
+ internal object Options(){return new{appInfo=WidgetHost.AppInfo(),taskbar=preferences.taskbar,startup=startup.Enabled,startupNeedsRepair=!startup.Enabled&&!string.IsNullOrWhiteSpace(startup.Registration),trayVisible=preferences.widgetTrayVisible,autoCheckUpdates=preferences.widgetAutoCheckUpdates,iconThemeId=preferences.iconThemeId,language=preferences.language,dataPath=WorkbenchHost.DataRoot,dataMigration=MigrationStatus(),localIntervalMs=preferences.localIntervalMs,monitoring=preferences.widgetMonitoring,desktop=preferences.widgetDesktop};}
  internal object Save(Dictionary<string,object> p,JavaScriptSerializer json){
   var settings=json.Deserialize<TaskbarSettings>(json.Serialize(p["taskbar"]));if(settings==null)throw new ArgumentException("缺少任务栏设置");
   var raw=p["taskbar"] as Dictionary<string,object>;object changed;
@@ -420,6 +437,34 @@ internal sealed class WidgetRuntime:IDisposable {
   if(string.IsNullOrWhiteSpace(startup.Registration))throw new InvalidOperationException("请先启用并应用登录启动。");
   startup.Set(true);return Options();
  }
+ string ColorSwatchesFile{get{return Path.Combine(WorkbenchHost.DataRoot,"peek-color-swatches.json");}}
+ internal string[] ColorSwatches(JavaScriptSerializer json){
+  try{return NormalizeSwatches(json.Deserialize<string[]>(File.ReadAllText(ColorSwatchesFile)));}catch{return new string[0];}
+ }
+ static string[] NormalizeSwatches(IEnumerable<string> items){return (items??new string[0]).Where(x=>x!=null&&System.Text.RegularExpressions.Regex.IsMatch(x,@"^#[0-9A-Fa-f]{6}$")).Select(x=>x.ToUpperInvariant()).Distinct().Take(8).ToArray();}
+ internal string[] SaveSwatches(string[] colors,JavaScriptSerializer json){
+  var items=NormalizeSwatches(colors);string file=ColorSwatchesFile,next=file+".tmp";File.WriteAllText(next,json.Serialize(items));
+  if(File.Exists(file))File.Replace(next,file,null);else File.Move(next,file);return items;
+ }
+ static string MigrationStatus(){try{return WidgetHost.TestMode?null:File.ReadAllText(PeekDataRoot.Status);}catch{return null;}}
+ internal async Task<bool> MoveDataFolder(){
+  if(WidgetHost.TestMode||closing||movingData||updateTransfer!=null||string.IsNullOrEmpty(WidgetHost.LauncherPath))throw new InvalidOperationException("当前无法迁移 Peek 数据。");
+  using(var choose=new System.Windows.Forms.FolderBrowserDialog{Description="选择一个位置；Peek 会在此处创建 Peek 文件夹。",ShowNewFolderButton=true}){
+   if(choose.ShowDialog()!=System.Windows.Forms.DialogResult.OK)return false;
+   string target=PeekDataRoot.Destination(WorkbenchHost.DataRoot,choose.SelectedPath);
+   if(MessageBox.Show("配置和数据将移动到：\n"+target+"\n\nPeek 将自动重启，原始数据保留一份备份。","移动 Peek 数据",MessageBoxButton.OKCancel,MessageBoxImage.Question)!=MessageBoxResult.OK)return false;
+   var token=Guid.NewGuid().ToString("N");movingData=true;
+   try{
+    using(var ready=new EventWaitHandle(false,EventResetMode.ManualReset,PeekDataRoot.MoveEvent(token)))
+    using(var self=Process.GetCurrentProcess())
+    using(var worker=Process.Start(new ProcessStartInfo(WidgetHost.LauncherPath,"--peek-move-data "+PeekUpdateProtocol.Quote(choose.SelectedPath)+" "+self.Id+" "+self.StartTime.ToUniversalTime().Ticks+" "+token){UseShellExecute=false})){
+     if(worker==null||!await Task.Run(()=>ready.WaitOne(7000)))throw new IOException("迁移程序未就绪，未改变数据位置。");
+    }
+    app.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(Exit));return true;
+   }catch{movingData=false;throw;}
+  }
+ }
+ bool movingData;
  internal void OpenDataFolder(){
   Directory.CreateDirectory(WorkbenchHost.DataRoot);
   using(var process=Process.Start(new ProcessStartInfo{FileName=WorkbenchHost.DataRoot,UseShellExecute=true})){}
@@ -455,7 +500,7 @@ internal sealed class WidgetRuntime:IDisposable {
   if(window!=null)window.RefreshParkedDraft();
  }
  internal void Exit(){if(closing)return;closing=true;if(updateTransfer!=null)updateTransfer.Cancel();if(window!=null)window.ClosePermanently();if(desktopWindow!=null)desktopWindow.Close();app.Shutdown();}
- public void Dispose(){closing=true;alertTimer.Stop();updateTimer.Stop();alerts.Flush();if(desktopWindow!=null){desktopWindow.Close();desktopWindow=null;}SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;if(menu!=null)menu.Dispose();tray.Visible=false;tray.Dispose();trayIcon.Dispose();taskbar.Dispose();gateway.Dispose();light.Dispose();capture.Stop(1500);}
+ public void Dispose(){closing=true;alertTimer.Stop();updateTimer.Stop();alerts.Flush();if(desktopWindow!=null){desktopWindow.Close();desktopWindow=null;}SystemEvents.UserPreferenceChanged -= OnSystemPreferenceChanged;menu.Dispose();tray.Visible=false;tray.Dispose();trayIcon.Dispose();taskbar.Dispose();gateway.Dispose();light.Dispose();capture.Stop(1500);}
 }
 
 internal sealed class WidgetWindow:Window {
@@ -599,6 +644,7 @@ internal sealed class WidgetWindow:Window {
   }catch(Exception ex){if(!closed){DiagnosticsLog.Write("widget-settings-init",ex);ShowError("无法打开设置，请确认系统已安装 Microsoft Edge WebView2 Runtime。\n"+ex.Message);}}
  }
  void ShowError(string text){faulted=true;documentReady=true;Content=new TextBlock{Text=text,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(24),Foreground=new SolidColorBrush(NativeWindowTheme.ColorValue(WidgetRuntime.AppearanceFor(theme).colors["foreground"]))};PresentIfReady();}
+ bool pickingScreenColor;
  async void HandleMessage(object sender,CoreWebView2WebMessageReceivedEventArgs e){
   if(closed||!Trusted(e.Source))return;
   string id="";try{
@@ -618,6 +664,16 @@ internal sealed class WidgetWindow:Window {
     case "widget.sources":result=runtime.Sources();break;
     case "widget.gateway.status":result=runtime.GatewayStatus();break;
     case "widget.windows.taskbar":runtime.OpenWindowsTaskbar();break;
+    case "widget.colors.get":result=runtime.ColorSwatches(json);break;
+    case "widget.colors.pick":
+     // Defer the modal dialog until the WebView callback has unwound.
+     result=await Dispatcher.InvokeAsync(()=>{
+      if(closed||!IsActive||!IsVisible||pickingScreenColor)throw new InvalidOperationException("Peek settings is not active");
+      pickingScreenColor=true;
+      try{return PeekScreenColorPicker.Pick(new WindowInteropHelper(this).Handle);}finally{pickingScreenColor=false;}
+     });break;
+    case "widget.colors.set":result=runtime.SaveSwatches(json.ConvertToType<string[]>(((Dictionary<string,object>)msg["params"])["colors"]),json);break;
+    case "widget.data.move":result=await runtime.MoveDataFolder();break;
     case "widget.data.open":runtime.OpenDataFolder();break;
     case "widget.updates.status":result=runtime.UpdateStatus;break;
     case "widget.updates.check":result=await runtime.CheckUpdates();break;
@@ -625,10 +681,13 @@ internal sealed class WidgetWindow:Window {
     case "widget.updates.install":result=runtime.BeginDownloadUpdate(true);break;
     case "widget.updates.apply":result=runtime.BeginApplyUpdate();break;
     case "widget.updates.cancel":result=runtime.CancelUpdate();break;
-    case "widget.updates.releases":runtime.OpenReleasePage();break;
+    case "widget.updates.releases":runtime.OpenPeekPage("releases");break;
+    case "widget.about.version":runtime.OpenPeekPage("version");break;
+    case "widget.about.github":runtime.OpenPeekPage("repository");break;
     case "widget.ready":AcceptRenderedView(Convert.ToInt32(((Dictionary<string,object>)msg["params"])["epoch"]));break;
     case "widget.load-failed":ShowError("无法加载小组件设置。\n"+Convert.ToString(((Dictionary<string,object>)msg["params"])["error"]));break;
     case "widget.close":Dispatcher.BeginInvoke(new Action(Dismiss));break;
+    case "widget.smoke.menu":runtime.SmokeMenu(Convert.ToString(((Dictionary<string,object>)msg["params"])["surface"]));break;
     case "widget.smoke.window-state":if(!WidgetHost.TestMode)throw new InvalidOperationException("Unsupported command");result=SmokeState();break;
     case "widget.smoke.minimize":if(!WidgetHost.TestMode)throw new InvalidOperationException("Unsupported command");Dispatcher.BeginInvoke(new Action(()=>WindowState=WindowState.Minimized));break;
     case "widget.appearance":result=runtime.SetAppearance(Convert.ToString(((Dictionary<string,object>)msg["params"])["mode"]));break;

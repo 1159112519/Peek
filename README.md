@@ -56,7 +56,7 @@
 
 | 版本 | 如何使用 |
 | --- | --- |
-| [Windows 安装版](https://github.com/1159112519/Peek/releases/download/v0.1.2/Peek-Setup-v0.1.2.exe) | 推荐日常使用。运行安装向导，再从开始菜单打开 Peek。 |
+| [Windows 安装版](https://github.com/1159112519/Peek/releases/download/v0.1.3/Peek-Setup-v0.1.3.exe) | 推荐日常使用。运行安装向导，再从开始菜单打开 Peek。 |
 | [Windows 便携版](https://github.com/1159112519/Peek/releases/latest/download/Peek.exe) | 下载后直接运行，无需解压。 |
 | [SHA-256 校验文件](https://github.com/1159112519/Peek/releases/latest/download/SHA256SUMS.txt) | 核对下载文件的完整性。 |
 

@@ -109,6 +109,7 @@ export function WidgetApp({initialSettings,initialError}){
    setDone('已重设登录启动项');
   }catch(e){setError(e.message);}finally{setBusy(false);}
  }
+ async function moveData(){if(dirty){setError(t('请先应用或取消未保存的更改。'));return;}try{await native.request('widget.data.move');}catch(e){setError(e.message);}}
  async function openData(){try{await native.request('widget.data.open');}catch(e){setError(e.message);}}
  return <main className="widget-settings-window native-preferences" aria-label={t('小组件设置分类')}>
   <ToolNavigation density="compact" label={t('小组件设置分类')} items={settingsTabs} value={page} onChange={setPage} actions={appearanceActions} panels={{
@@ -147,8 +148,9 @@ export function WidgetApp({initialSettings,initialError}){
       <div className="widget-option-row widget-data-row">
        <h4 id="widget-data-heading">{t('配置和数据')}</h4>
        <code className="widget-data-path" title={draft.dataPath}>{draft.dataPath}</code>
-       <Button onClick={openData}>{t('打开配置文件夹')}</Button>
+       <div className="widget-data-actions"><Button onClick={openData}>{t('打开文件夹')}</Button><Button onClick={moveData}>{t('迁移…')}</Button></div>
       </div>
+      {draft.dataMigration&&<div className="widget-data-status" role="status">{draft.dataMigration}</div>}
      </section>
      <PeekIconPicker value={draft.iconThemeId} onChange={value=>change('iconThemeId',value)}/>
     </div>}

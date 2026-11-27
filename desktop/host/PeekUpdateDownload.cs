@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -31,8 +31,8 @@ internal static class PeekUpdateDownload {
   }
   throw new IOException("官方更新地址跳转过多。");
  }
- internal static string Fetch(Version version,bool installed,string destination,Action<int> progress,CancellationToken token){
-  string package=PeekUpdateProtocol.AssetName(version,installed),digest=null;
+ internal static string Fetch(Version version,bool installed,bool msi,string destination,Action<int> progress,CancellationToken token){
+  string package=PeekUpdateProtocol.AssetName(version,installed,msi),digest=null;
   string release=PeekUpdates.ReleasesUrl+"/download/v"+version.ToString(3)+"/";
   // This public asset is tied to the checked Release tag and does not need anonymous REST API quota.
   WithAsset(new Uri(release+"SHA256SUMS.txt"),token,response=>{
@@ -72,21 +72,21 @@ internal static class PeekUpdateDownload {
   Directory.CreateDirectory(folder);
   string part=Path.Combine(folder,"package.part");bool ready=false;
   try{
-   bool smoke=WidgetHost.TestMode,installed=PeekUpdateProtocol.InstalledAt(target);string digest;
+   bool smoke=WidgetHost.TestMode,installed=PeekUpdateProtocol.InstalledAt(target),msi=PeekUpdateProtocol.MsiInstalledAt(target);string digest;
    if(smoke){
     string testFolder=Path.GetDirectoryName(WorkbenchHost.SmokeRoot);
     if(string.IsNullOrEmpty(testFolder)||!PeekUpdateProtocol.Same(Path.GetDirectoryName(target),testFolder))throw new InvalidOperationException("Updates in test mode require an isolated copy of Peek.exe.");
     var lines=File.ReadAllLines(Path.Combine(WorkbenchHost.SmokeRoot,"peek-update-package.test.txt"));
-    if(lines.Length!=2||(lines[0]!="portable"&&lines[0]!="installed"))throw new InvalidDataException("Invalid test asset fixture");
-    installed=lines[0]=="installed";digest=lines[1];
-    string fixture=Path.Combine(WorkbenchHost.SmokeRoot,"Fixture",PeekUpdateProtocol.AssetName(version,installed));
+    if(lines.Length!=2||(lines[0]!="portable"&&lines[0]!="installed"&&lines[0]!="msi"))throw new InvalidDataException("Invalid test asset fixture");
+    msi=lines[0]=="msi";installed=msi||lines[0]=="installed";digest=lines[1];
+    string fixture=Path.Combine(WorkbenchHost.SmokeRoot,"Fixture",PeekUpdateProtocol.AssetName(version,installed,msi));
     PeekUpdateProtocol.CheckMetadata(new FileInfo(fixture).Length,digest);File.Copy(fixture,part,false);
-   }else digest=Fetch(version,installed,part,progress,token);
+   }else digest=Fetch(version,installed,msi,part,progress,token);
    token.ThrowIfCancellationRequested();
-   long size=new FileInfo(part).Length;PeekUpdateProtocol.Verify(part,size,digest,version,installed);
+   long size=new FileInfo(part).Length;PeekUpdateProtocol.Verify(part,size,digest,version,installed,msi);
    token.ThrowIfCancellationRequested();
    using(var self=Process.GetCurrentProcess()){
-    var job=new PeekUpdateJob(folder,target,WorkbenchHost.DataRoot,current,version,installed,size,digest,self.Id,self.StartTime.ToUniversalTime().Ticks,smoke,smoke?WorkbenchHost.DebugPort:0);
+    var job=new PeekUpdateJob(folder,target,WorkbenchHost.DataRoot,current,version,installed,size,digest,self.Id,self.StartTime.ToUniversalTime().Ticks,smoke,smoke?WorkbenchHost.DebugPort:0,msi);
     job.Save();File.Move(part,job.Payload);ready=true;progress(100);return job;
    }
   }finally{if(!ready)try{File.Delete(part);File.Delete(Path.Combine(folder,"job.txt"));Directory.Delete(folder);}catch(IOException){}catch(UnauthorizedAccessException){}}

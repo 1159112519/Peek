@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
@@ -26,7 +26,7 @@ public sealed class PeekDesktopLayoutProbe {
   try{Run(payload,output);}catch(Exception e){Console.Error.WriteLine(e);Environment.ExitCode=1;}
  }
  static void Run(string payload,string output){
-  var a=Assembly.LoadFrom(Path.Combine(payload,"AsterHubWidgets.exe"));
+  var a=Assembly.LoadFrom(Path.Combine(payload,File.Exists(Path.Combine(payload,"PeekHost.exe"))?"PeekHost.exe":"Peek.exe"));
   foreach(bool dark in new[]{false,true}){
    Capture(a,output,dark,"han",new[]{"cpu","memory","gpu",null,null,null,null,null,null},new[]{"CPU","内存","显卡"},new[]{"%","%","%"},new double?[]{63,89,null},new[]{0,0,0},1);
    Capture(a,output,dark,"han-used",new[]{"cpu","memoryUsed","gpu",null,null,null,null,null,null},new[]{"CPU","已用","显卡"},new[]{"%","GB","%"},new double?[]{63,13.9,null},new[]{0,1,0},1);
